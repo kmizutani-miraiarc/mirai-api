@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  mirai-api:
+    build: .
+    container_name: mirai-api-server
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=development
+    volumes:
+      # 開発時はソースコードをマウント（ホットリロード用）
+      - .:/app
+      # ログディレクトリをマウント
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - mirai-network
+
+  # 本番環境用の設定（コメントアウト）
+  # mirai-api-prod:
+  #   build: .
+  #   container_name: mirai-api-server-prod
+  #   ports:
+  #     - "80:8000"
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #     - ENVIRONMENT=production
+  #   restart: always
+  #   networks:
+  #     - mirai-network
+
+networks:
+  mirai-network:
+    driver: bridge
+
+volumes:
+  logs:
+    driver: local
