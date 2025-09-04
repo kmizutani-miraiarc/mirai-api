@@ -121,8 +121,20 @@ class HubSpotBukkenClient(HubSpotBaseClient):
     async def search_bukken(self, search_criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
         """物件情報を検索"""
         try:
+            # 空文字列のqueryパラメータをNoneに変換
+            if search_criteria.get("query") == "":
+                search_criteria["query"] = None
+            
+            # 空文字列のafterパラメータをNoneに変換
+            if search_criteria.get("after") == "":
+                search_criteria["after"] = None
+            
+            logger.info(f"Searching bukken with criteria: {search_criteria}")
             result = await self._make_request("POST", f"/crm/v3/objects/{self.object_type_id}/search", json=search_criteria)
-            return result.get("results", [])
+            logger.info(f"Search result: {result}")
+            results = result.get("results", [])
+            logger.info(f"Found {len(results)} results")
+            return results
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 logger.error("HubSpot API認証エラー: 有効なAPIキーを設定してください")

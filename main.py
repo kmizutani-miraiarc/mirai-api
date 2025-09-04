@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import uvicorn
 import logging
@@ -38,10 +38,54 @@ class TestResponse(BaseModel):
     data: Dict[str, Any]
 
 class HubSpotResponse(BaseModel):
-    status: str
-    message: str
-    data: Optional[Dict[str, Any]] = None
-    count: Optional[int] = None
+    status: str = Field(example="success", description="レスポンスステータス")
+    message: str = Field(example="物件情報検索を正常に実行しました（100件の物件を取得）", description="レスポンスメッセージ")
+    data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        example={
+            "results": [
+                {
+                    "id": "144611322612",
+                    "properties": {
+                        "bukken_name": "柏市一棟アパート",
+                        "bukken_state": "千葉県",
+                        "bukken_city": "柏市",
+                        "bukken_address": "中新宿二丁目"
+                    },
+                    "createdAt": "2025-09-04T05:50:12.453Z",
+                    "updatedAt": "2025-09-04T05:50:12.920Z",
+                    "archived": False
+                }
+            ]
+        },
+        description="検索結果データ"
+    )
+    count: Optional[int] = Field(example=100, description="取得件数")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "status": "success",
+                "message": "物件情報検索を正常に実行しました（100件の物件を取得）",
+                "data": {
+                    "results": [
+                        {
+                            "id": "144611322612",
+                            "properties": {
+                                "bukken_name": "柏市一棟アパート",
+                                "bukken_state": "千葉県",
+                                "bukken_city": "柏市",
+                                "bukken_address": "中新宿二丁目"
+                            },
+                            "createdAt": "2025-09-04T05:50:12.453Z",
+                            "updatedAt": "2025-09-04T05:50:12.920Z",
+                            "archived": False
+                        }
+                    ]
+                },
+                "count": 100
+            }
+        }
 
 # リクエスト用のモデル
 class OwnerCreateRequest(BaseModel):
@@ -80,12 +124,67 @@ class BukkenUpdateRequest(BaseModel):
     properties: Dict[str, Any]
 
 class BukkenSearchRequest(BaseModel):
-    filterGroups: List[Dict[str, Any]]
-    sorts: Optional[List[Dict[str, Any]]] = None
-    query: Optional[str] = None
-    properties: Optional[List[str]] = None
-    limit: Optional[int] = 100
-    after: Optional[str] = None
+    """物件情報検索リクエスト"""
+    filterGroups: List[Dict[str, Any]] = Field(
+        default=[],
+        example=[
+            {
+                "filters": [
+                    {
+                        "propertyName": "bukken_name",
+                        "operator": "CONTAINS_TOKEN",
+                        "value": "テスト"
+                    }
+                ]
+            }
+        ],
+        description="検索フィルターグループ"
+    )
+    sorts: Optional[List[Dict[str, Any]]] = Field(
+        default=[
+            {
+                "propertyName": "hs_createdate",
+                "direction": "DESCENDING"
+            }
+        ],
+        example=[
+            {
+                "propertyName": "hs_createdate",
+                "direction": "DESCENDING"
+            }
+        ],
+        description="ソート条件"
+    )
+    query: Optional[str] = Field(
+        default=None,
+        example="",
+        description="検索クエリ（空文字列またはnullで全件検索）"
+    )
+    properties: Optional[List[str]] = Field(
+        default=[
+            "bukken_name",
+            "bukken_state", 
+            "bukken_city",
+            "bukken_address"
+        ],
+        example=[
+            "bukken_name",
+            "bukken_state",
+            "bukken_city",
+            "bukken_address"
+        ],
+        description="取得するプロパティ"
+    )
+    limit: Optional[int] = Field(
+        default=100,
+        example=100,
+        description="取得件数上限"
+    )
+    after: Optional[str] = Field(
+        default=None,
+        example="",
+        description="ページネーション用のカーソル（空文字列またはnullで最初から検索）"
+    )
 
 # HubSpotクライアントのインスタンス
 hubspot_owners_client = HubSpotOwnersClient()
@@ -795,7 +894,58 @@ async def delete_hubspot_bukken(bukken_id: str):
         logger.error(f"Failed to delete HubSpot bukken {bukken_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"物件情報の削除に失敗しました: {str(e)}")
 
-@app.post("/hubspot/bukken/search", response_model=HubSpotResponse)
+@app.post(
+    "/hubspot/bukken/search", 
+    response_model=HubSpotResponse,
+    responses={
+        200: {
+            "description": "物件情報検索が正常に実行されました",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "success": {
+                            "summary": "検索成功（100件の物件を取得）",
+                            "description": "物件情報検索が正常に実行され、100件の物件が取得されました",
+                            "value": {
+                                "status": "success",
+                                "message": "物件情報検索を正常に実行しました（100件の物件を取得）",
+                                "data": {
+                                    "results": [
+                                        {
+                                            "id": "144611322612",
+                                            "properties": {
+                                                "bukken_name": "柏市一棟アパート",
+                                                "bukken_state": "千葉県",
+                                                "bukken_city": "柏市",
+                                                "bukken_address": "中新宿二丁目"
+                                            },
+                                            "createdAt": "2025-09-04T05:50:12.453Z",
+                                            "updatedAt": "2025-09-04T05:50:12.920Z",
+                                            "archived": False
+                                        }
+                                    ]
+                                },
+                                "count": 100
+                            }
+                        },
+                        "empty": {
+                            "summary": "検索結果なし（0件）",
+                            "description": "検索条件に一致する物件が見つかりませんでした",
+                            "value": {
+                                "status": "success",
+                                "message": "物件情報検索を正常に実行しました（0件の物件を取得）",
+                                "data": {
+                                    "results": []
+                                },
+                                "count": 0
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
 async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
     """HubSpot物件情報を検索"""
     try:
@@ -805,10 +955,18 @@ async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
                 detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
             )
         
-        results = await hubspot_bukken_client.search_bukken(search_criteria.dict())
+        search_data = search_criteria.dict()
+        logger.info(f"Search request received: {search_data}")
+        logger.info(f"Search criteria details - filterGroups: {search_data.get('filterGroups', [])}")
+        logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
+        logger.info(f"Search criteria details - limit: {search_data.get('limit', 100)}")
+        
+        results = await hubspot_bukken_client.search_bukken(search_data)
+        logger.info(f"Search completed. Found {len(results)} results")
+        
         return HubSpotResponse(
             status="success",
-            message="物件情報検索を正常に実行しました",
+            message=f"物件情報検索を正常に実行しました（{len(results)}件の物件を取得）",
             data={"results": results},
             count=len(results)
         )
@@ -816,7 +974,12 @@ async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to search HubSpot bukken: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"物件情報の検索に失敗しました: {str(e)}")
+        return HubSpotResponse(
+            status="error",
+            message=f"物件情報検索に失敗しました: {str(e)}",
+            data={"results": []},
+            count=0
+        )
 
 @app.get("/hubspot/bukken/schema", response_model=HubSpotResponse)
 async def get_hubspot_bukken_schema():
