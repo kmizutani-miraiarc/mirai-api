@@ -9,11 +9,15 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=development
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY:-your-hubspot-api-key-here}
+      - HUBSPOT_ID=${HUBSPOT_ID:-your-hubspot-id-here}
     volumes:
       # 開発時はソースコードをマウント（ホットリロード用）
       - .:/app
       # ログディレクトリをマウント
       - ./logs:/app/logs
+      # 環境変数ファイルをマウント
+      - ./.env:/app/.env
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

@@ -54,13 +54,30 @@ python main.py
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+## 環境変数設定
+
+### HubSpot API設定
+
+HubSpot APIを使用する場合は、以下の環境変数を設定してください：
+
+```bash
+# 環境変数ファイルを作成
+cp env.example .env
+
+# .envファイルを編集して実際の値を設定
+HUBSPOT_API_KEY=your-actual-hubspot-api-key
+HUBSPOT_ID=your-actual-hubspot-id
+```
+
 ## エンドポイント
 
-### ルートエンドポイント
+### 基本エンドポイント
+
+#### ルートエンドポイント
 - **URL**: `GET /`
 - **説明**: サーバーの動作確認
 
-### テストエンドポイント
+#### テストエンドポイント
 - **URL**: `GET /test`
 - **説明**: テスト用のJSONレスポンスを返す
 - **レスポンス例**:
@@ -79,13 +96,50 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 }
 ```
 
-### ヘルスチェック
+#### ヘルスチェック
 - **URL**: `GET /health`
 - **説明**: サーバーの状態確認
 
-### API情報
+#### API情報
 - **URL**: `GET /api/info`
 - **説明**: 利用可能なエンドポイントの一覧
+
+### HubSpot API エンドポイント
+
+#### 担当者関連
+- **URL**: `GET /hubspot/owners`
+- **説明**: HubSpot担当者一覧を取得
+- **パラメータ**: なし
+
+- **URL**: `GET /hubspot/owners/{owner_id}`
+- **説明**: 指定されたIDの担当者詳細を取得
+- **パラメータ**: `owner_id` (必須)
+
+#### コンタクト関連
+- **URL**: `GET /hubspot/contacts`
+- **説明**: HubSpotコンタクト一覧を取得
+- **パラメータ**: 
+  - `limit` (オプション, デフォルト: 100)
+  - `after` (オプション, ページネーション用)
+
+- **URL**: `GET /hubspot/contacts/{contact_id}`
+- **説明**: 指定されたIDのコンタクト詳細を取得
+- **パラメータ**: `contact_id` (必須)
+
+#### 会社関連
+- **URL**: `GET /hubspot/companies`
+- **説明**: HubSpot会社一覧を取得
+- **パラメータ**: 
+  - `limit` (オプション, デフォルト: 100)
+  - `after` (オプション, ページネーション用)
+
+- **URL**: `GET /hubspot/companies/{company_id}`
+- **説明**: 指定されたIDの会社詳細を取得
+- **パラメータ**: `company_id` (必須)
+
+#### HubSpot接続テスト
+- **URL**: `GET /hubspot/health`
+- **説明**: HubSpot API接続テスト
 
 ## アクセス方法
 

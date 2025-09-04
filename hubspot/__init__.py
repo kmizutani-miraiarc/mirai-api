@@ -1,0 +1,1 @@
+# HubSpot API モジュール
