@@ -7,6 +7,8 @@ import logging
 from hubspot.owners import HubSpotOwnersClient
 from hubspot.contacts import HubSpotContactsClient
 from hubspot.companies import HubSpotCompaniesClient
+from hubspot.deals import HubSpotDealsClient
+from hubspot.bukken import HubSpotBukkenClient
 from hubspot.config import Config
 
 # ログ設定
@@ -65,10 +67,32 @@ class CompanyCreateRequest(BaseModel):
 class CompanyUpdateRequest(BaseModel):
     properties: Dict[str, Any]
 
+class DealCreateRequest(BaseModel):
+    properties: Dict[str, Any]
+
+class DealUpdateRequest(BaseModel):
+    properties: Dict[str, Any]
+
+class BukkenCreateRequest(BaseModel):
+    properties: Dict[str, Any]
+
+class BukkenUpdateRequest(BaseModel):
+    properties: Dict[str, Any]
+
+class BukkenSearchRequest(BaseModel):
+    filterGroups: List[Dict[str, Any]]
+    sorts: Optional[List[Dict[str, Any]]] = None
+    query: Optional[str] = None
+    properties: Optional[List[str]] = None
+    limit: Optional[int] = 100
+    after: Optional[str] = None
+
 # HubSpotクライアントのインスタンス
 hubspot_owners_client = HubSpotOwnersClient()
 hubspot_contacts_client = HubSpotContactsClient()
 hubspot_companies_client = HubSpotCompaniesClient()
+hubspot_deals_client = HubSpotDealsClient()
+hubspot_bukken_client = HubSpotBukkenClient()
 
 @app.get("/")
 async def root():
@@ -126,6 +150,19 @@ async def api_info():
             {"path": "/hubspot/companies/{company_id}", "method": "GET", "description": "HubSpot会社詳細取得"},
             {"path": "/hubspot/companies/{company_id}", "method": "PATCH", "description": "HubSpot会社情報更新"},
             {"path": "/hubspot/companies/{company_id}", "method": "DELETE", "description": "HubSpot会社削除"},
+            {"path": "/hubspot/deals", "method": "GET", "description": "HubSpot取引一覧取得"},
+            {"path": "/hubspot/deals", "method": "POST", "description": "HubSpot取引作成"},
+            {"path": "/hubspot/deals/{deal_id}", "method": "GET", "description": "HubSpot取引詳細取得"},
+            {"path": "/hubspot/deals/{deal_id}", "method": "PATCH", "description": "HubSpot取引情報更新"},
+            {"path": "/hubspot/deals/{deal_id}", "method": "DELETE", "description": "HubSpot取引削除"},
+            {"path": "/hubspot/bukken", "method": "GET", "description": "HubSpot物件情報一覧取得"},
+            {"path": "/hubspot/bukken", "method": "POST", "description": "HubSpot物件情報作成"},
+            {"path": "/hubspot/bukken/{bukken_id}", "method": "GET", "description": "HubSpot物件情報詳細取得"},
+            {"path": "/hubspot/bukken/{bukken_id}", "method": "PATCH", "description": "HubSpot物件情報更新"},
+            {"path": "/hubspot/bukken/{bukken_id}", "method": "DELETE", "description": "HubSpot物件情報削除"},
+            {"path": "/hubspot/bukken/search", "method": "POST", "description": "HubSpot物件情報検索"},
+            {"path": "/hubspot/bukken/schema", "method": "GET", "description": "HubSpot物件情報スキーマ取得"},
+            {"path": "/hubspot/bukken/properties", "method": "GET", "description": "HubSpot物件情報プロパティ一覧取得"},
             {"path": "/hubspot/health", "method": "GET", "description": "HubSpot API接続テスト"},
             {"path": "/hubspot/debug", "method": "GET", "description": "HubSpot設定デバッグ情報"}
         ]
@@ -509,6 +546,326 @@ async def delete_hubspot_company(company_id: str):
     except Exception as e:
         logger.error(f"Failed to delete HubSpot company {company_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"会社の削除に失敗しました: {str(e)}")
+
+# HubSpot取引関連エンドポイント
+@app.get("/hubspot/deals", response_model=HubSpotResponse)
+async def get_hubspot_deals(limit: int = 100, after: Optional[str] = None):
+    """HubSpot取引一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        deals = await hubspot_deals_client.get_deals(limit=limit, after=after)
+        return HubSpotResponse(
+            status="success",
+            message="取引一覧を正常に取得しました",
+            data={"deals": deals},
+            count=len(deals)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get HubSpot deals: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"取引一覧の取得に失敗しました: {str(e)}")
+
+@app.get("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
+async def get_hubspot_deal(deal_id: str):
+    """HubSpot取引詳細を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        deal = await hubspot_deals_client.get_deal_by_id(deal_id)
+        if not deal:
+            raise HTTPException(status_code=404, detail="指定された取引が見つかりません")
+        
+        return HubSpotResponse(
+            status="success",
+            message="取引情報を正常に取得しました",
+            data={"deal": deal}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get HubSpot deal {deal_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"取引情報の取得に失敗しました: {str(e)}")
+
+@app.post("/hubspot/deals", response_model=HubSpotResponse)
+async def create_hubspot_deal(deal_data: DealCreateRequest):
+    """HubSpot取引を作成"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        deal = await hubspot_deals_client.create_deal(deal_data.dict())
+        if not deal:
+            raise HTTPException(status_code=400, detail="取引の作成に失敗しました")
+        
+        return HubSpotResponse(
+            status="success",
+            message="取引を正常に作成しました",
+            data={"deal": deal}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create HubSpot deal: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"取引の作成に失敗しました: {str(e)}")
+
+@app.patch("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
+async def update_hubspot_deal(deal_id: str, deal_data: DealUpdateRequest):
+    """HubSpot取引情報を更新"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        deal = await hubspot_deals_client.update_deal(deal_id, deal_data.dict())
+        if not deal:
+            raise HTTPException(status_code=404, detail="指定された取引が見つからないか、更新に失敗しました")
+        
+        return HubSpotResponse(
+            status="success",
+            message="取引情報を正常に更新しました",
+            data={"deal": deal}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update HubSpot deal {deal_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"取引情報の更新に失敗しました: {str(e)}")
+
+@app.delete("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
+async def delete_hubspot_deal(deal_id: str):
+    """HubSpot取引を削除"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        success = await hubspot_deals_client.delete_deal(deal_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="指定された取引が見つからないか、削除に失敗しました")
+        
+        return HubSpotResponse(
+            status="success",
+            message="取引を正常に削除しました",
+            data={"deal_id": deal_id}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete HubSpot deal {deal_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"取引の削除に失敗しました: {str(e)}")
+
+# HubSpot物件情報関連エンドポイント
+@app.get("/hubspot/bukken", response_model=HubSpotResponse)
+async def get_hubspot_bukken_list(limit: int = 100, after: Optional[str] = None):
+    """HubSpot物件情報一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        bukken_list = await hubspot_bukken_client.get_bukken_list(limit=limit, after=after)
+        return HubSpotResponse(
+            status="success",
+            message="物件情報一覧を正常に取得しました",
+            data={"bukken_list": bukken_list},
+            count=len(bukken_list)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get HubSpot bukken list: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報一覧の取得に失敗しました: {str(e)}")
+
+@app.get("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
+async def get_hubspot_bukken(bukken_id: str):
+    """HubSpot物件情報詳細を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        bukken = await hubspot_bukken_client.get_bukken_by_id(bukken_id)
+        if not bukken:
+            raise HTTPException(status_code=404, detail="指定された物件情報が見つかりません")
+        
+        return HubSpotResponse(
+            status="success",
+            message="物件情報を正常に取得しました",
+            data={"bukken": bukken}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get HubSpot bukken {bukken_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報の取得に失敗しました: {str(e)}")
+
+@app.post("/hubspot/bukken", response_model=HubSpotResponse)
+async def create_hubspot_bukken(bukken_data: BukkenCreateRequest):
+    """HubSpot物件情報を作成"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        bukken = await hubspot_bukken_client.create_bukken(bukken_data.dict())
+        if not bukken:
+            raise HTTPException(status_code=400, detail="物件情報の作成に失敗しました")
+        
+        return HubSpotResponse(
+            status="success",
+            message="物件情報を正常に作成しました",
+            data={"bukken": bukken}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create HubSpot bukken: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報の作成に失敗しました: {str(e)}")
+
+@app.patch("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
+async def update_hubspot_bukken(bukken_id: str, bukken_data: BukkenUpdateRequest):
+    """HubSpot物件情報を更新"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        bukken = await hubspot_bukken_client.update_bukken(bukken_id, bukken_data.dict())
+        if not bukken:
+            raise HTTPException(status_code=404, detail="指定された物件情報が見つからないか、更新に失敗しました")
+        
+        return HubSpotResponse(
+            status="success",
+            message="物件情報を正常に更新しました",
+            data={"bukken": bukken}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update HubSpot bukken {bukken_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報の更新に失敗しました: {str(e)}")
+
+@app.delete("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
+async def delete_hubspot_bukken(bukken_id: str):
+    """HubSpot物件情報を削除"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        success = await hubspot_bukken_client.delete_bukken(bukken_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="指定された物件情報が見つからないか、削除に失敗しました")
+        
+        return HubSpotResponse(
+            status="success",
+            message="物件情報を正常に削除しました",
+            data={"bukken_id": bukken_id}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete HubSpot bukken {bukken_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報の削除に失敗しました: {str(e)}")
+
+@app.post("/hubspot/bukken/search", response_model=HubSpotResponse)
+async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
+    """HubSpot物件情報を検索"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        results = await hubspot_bukken_client.search_bukken(search_criteria.dict())
+        return HubSpotResponse(
+            status="success",
+            message="物件情報検索を正常に実行しました",
+            data={"results": results},
+            count=len(results)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to search HubSpot bukken: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報の検索に失敗しました: {str(e)}")
+
+@app.get("/hubspot/bukken/schema", response_model=HubSpotResponse)
+async def get_hubspot_bukken_schema():
+    """HubSpot物件情報カスタムオブジェクトのスキーマを取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        schema = await hubspot_bukken_client.get_bukken_schema()
+        if not schema:
+            raise HTTPException(status_code=404, detail="物件情報カスタムオブジェクトのスキーマが見つかりません")
+        
+        return HubSpotResponse(
+            status="success",
+            message="物件情報スキーマを正常に取得しました",
+            data={"schema": schema}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get HubSpot bukken schema: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報スキーマの取得に失敗しました: {str(e)}")
+
+@app.get("/hubspot/bukken/properties", response_model=HubSpotResponse)
+async def get_hubspot_bukken_properties():
+    """HubSpot物件情報カスタムオブジェクトのプロパティ一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        properties = await hubspot_bukken_client.get_bukken_properties()
+        
+        return HubSpotResponse(
+            status="success",
+            message="物件情報プロパティ一覧を正常に取得しました",
+            data={"properties": properties},
+            count=len(properties)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get HubSpot bukken properties: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"物件情報プロパティ一覧の取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/health", response_model=HubSpotResponse)
 async def hubspot_health_check():
