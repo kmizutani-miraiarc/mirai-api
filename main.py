@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
@@ -10,10 +10,31 @@ from hubspot.companies import HubSpotCompaniesClient
 from hubspot.deals import HubSpotDealsClient
 from hubspot.bukken import HubSpotBukkenClient
 from hubspot.config import Config
+from database.connection import db_connection
+from database.api_keys import api_key_manager
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# API認証の依存関数
+async def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    """API認証キーを検証（データベースベース）"""
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401, 
+            detail="API key is required. Please provide X-API-Key header."
+        )
+    
+    # データベースからAPIキーを検証
+    api_key_info = await api_key_manager.validate_api_key(x_api_key)
+    if not api_key_info:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid API key. Please check your X-API-Key header."
+        )
+    
+    return api_key_info
 
 # FastAPIアプリケーションのインスタンスを作成
 app = FastAPI(
@@ -21,6 +42,39 @@ app = FastAPI(
     description="AlmaLinuxで動作するPython APIサーバー",
     version="1.0.0"
 )
+
+# アプリケーション起動時のイベントハンドラー
+@app.on_event("startup")
+async def startup_event():
+    """アプリケーション起動時の処理"""
+    try:
+        # データベース接続プールを作成
+        await db_connection.create_pool()
+        
+        # データベース接続をテスト
+        if await db_connection.test_connection():
+            logger.info("データベース接続が正常に確立されました")
+        else:
+            logger.error("データベース接続テストに失敗しました")
+            raise Exception("データベース接続に失敗しました")
+        
+        # APIキーテーブルを作成
+        await api_key_manager.create_tables()
+        logger.info("APIキーテーブルの初期化が完了しました")
+        
+    except Exception as e:
+        logger.error(f"アプリケーション起動時にエラーが発生しました: {str(e)}")
+        raise
+
+# アプリケーション終了時のイベントハンドラー
+@app.on_event("shutdown")
+async def shutdown_event():
+    """アプリケーション終了時の処理"""
+    try:
+        await db_connection.close_pool()
+        logger.info("データベース接続プールを閉じました")
+    except Exception as e:
+        logger.error(f"アプリケーション終了時にエラーが発生しました: {str(e)}")
 
 # CORSミドルウェアを追加（外部からのアクセスを許可）
 app.add_middleware(
@@ -204,6 +258,34 @@ class BukkenSearchRequest(BaseModel):
         description="ページネーション用のカーソル（空文字列またはnullで最初から検索）"
     )
 
+# APIキー管理用のPydanticモデル
+class APIKeyCreateRequest(BaseModel):
+    """APIキー作成リクエスト"""
+    site_name: str = Field(..., description="サイト名", example="example-site")
+    description: Optional[str] = Field(None, description="APIキーの説明", example="テスト用APIキー")
+    expires_days: Optional[int] = Field(None, description="有効期限（日数）", example=365)
+
+class APIKeyResponse(BaseModel):
+    """APIキーレスポンス"""
+    id: int
+    site_name: str
+    api_key_prefix: str
+    description: Optional[str]
+    is_active: bool
+    created_at: str
+    updated_at: str
+    last_used_at: Optional[str]
+    expires_at: Optional[str]
+
+class APIKeyCreateResponse(BaseModel):
+    """APIキー作成レスポンス"""
+    site_name: str
+    api_key: str  # 作成時のみプレーンテキストで返す
+    api_key_prefix: str
+    description: Optional[str]
+    expires_at: Optional[str]
+    created_at: str
+
 # HubSpotクライアントのインスタンス
 hubspot_owners_client = HubSpotOwnersClient()
 hubspot_contacts_client = HubSpotContactsClient()
@@ -217,7 +299,7 @@ async def root():
     return {"message": "Mirai API Server is running!"}
 
 @app.get("/test", response_model=TestResponse)
-async def test_endpoint():
+async def test_endpoint(api_key: str = Depends(verify_api_key)):
     """テスト用エンドポイント - JSONを返す"""
     return TestResponse(
         status="success",
@@ -287,7 +369,7 @@ async def api_info():
 
 # HubSpot API エンドポイント
 @app.get("/hubspot/owners", response_model=HubSpotResponse)
-async def get_hubspot_owners():
+async def get_hubspot_owners(api_key: str = Depends(verify_api_key)):
     """HubSpot担当者一覧を取得"""
     try:
         if not Config.validate_config():
@@ -323,7 +405,7 @@ async def get_hubspot_owners():
         )
 
 @app.get("/hubspot/owners/{owner_id}", response_model=HubSpotResponse)
-async def get_hubspot_owner(owner_id: str):
+async def get_hubspot_owner(owner_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot担当者詳細を取得"""
     try:
         if not Config.validate_config():
@@ -348,7 +430,7 @@ async def get_hubspot_owner(owner_id: str):
         raise HTTPException(status_code=500, detail=f"担当者詳細の取得に失敗しました: {str(e)}")
 
 @app.post("/hubspot/owners", response_model=HubSpotResponse)
-async def create_hubspot_owner(owner_data: OwnerCreateRequest):
+async def create_hubspot_owner(owner_data: OwnerCreateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot担当者を作成"""
     try:
         if not Config.validate_config():
@@ -373,7 +455,7 @@ async def create_hubspot_owner(owner_data: OwnerCreateRequest):
         raise HTTPException(status_code=500, detail=f"担当者の作成に失敗しました: {str(e)}")
 
 @app.patch("/hubspot/owners/{owner_id}", response_model=HubSpotResponse)
-async def update_hubspot_owner(owner_id: str, owner_data: OwnerUpdateRequest):
+async def update_hubspot_owner(owner_id: str, owner_data: OwnerUpdateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot担当者情報を更新"""
     try:
         if not Config.validate_config():
@@ -398,7 +480,7 @@ async def update_hubspot_owner(owner_id: str, owner_data: OwnerUpdateRequest):
         raise HTTPException(status_code=500, detail=f"担当者情報の更新に失敗しました: {str(e)}")
 
 @app.delete("/hubspot/owners/{owner_id}", response_model=HubSpotResponse)
-async def delete_hubspot_owner(owner_id: str):
+async def delete_hubspot_owner(owner_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot担当者を削除"""
     try:
         if not Config.validate_config():
@@ -423,7 +505,7 @@ async def delete_hubspot_owner(owner_id: str):
         raise HTTPException(status_code=500, detail=f"担当者の削除に失敗しました: {str(e)}")
 
 @app.get("/hubspot/contacts", response_model=HubSpotResponse)
-async def get_hubspot_contacts(limit: int = 100, after: Optional[str] = None):
+async def get_hubspot_contacts(limit: int = 100, after: Optional[str] = None, api_key: str = Depends(verify_api_key)):
     """HubSpotコンタクト一覧を取得"""
     try:
         if not Config.validate_config():
@@ -444,7 +526,7 @@ async def get_hubspot_contacts(limit: int = 100, after: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"コンタクト一覧の取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/contacts/{contact_id}", response_model=HubSpotResponse)
-async def get_hubspot_contact(contact_id: str):
+async def get_hubspot_contact(contact_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpotコンタクト詳細を取得"""
     try:
         if not Config.validate_config():
@@ -469,7 +551,7 @@ async def get_hubspot_contact(contact_id: str):
         raise HTTPException(status_code=500, detail=f"コンタクト詳細の取得に失敗しました: {str(e)}")
 
 @app.post("/hubspot/contacts", response_model=HubSpotResponse)
-async def create_hubspot_contact(contact_data: ContactCreateRequest):
+async def create_hubspot_contact(contact_data: ContactCreateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpotコンタクトを作成"""
     try:
         if not Config.validate_config():
@@ -494,7 +576,7 @@ async def create_hubspot_contact(contact_data: ContactCreateRequest):
         raise HTTPException(status_code=500, detail=f"コンタクトの作成に失敗しました: {str(e)}")
 
 @app.patch("/hubspot/contacts/{contact_id}", response_model=HubSpotResponse)
-async def update_hubspot_contact(contact_id: str, contact_data: ContactUpdateRequest):
+async def update_hubspot_contact(contact_id: str, contact_data: ContactUpdateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpotコンタクト情報を更新"""
     try:
         if not Config.validate_config():
@@ -519,7 +601,7 @@ async def update_hubspot_contact(contact_id: str, contact_data: ContactUpdateReq
         raise HTTPException(status_code=500, detail=f"コンタクト情報の更新に失敗しました: {str(e)}")
 
 @app.delete("/hubspot/contacts/{contact_id}", response_model=HubSpotResponse)
-async def delete_hubspot_contact(contact_id: str):
+async def delete_hubspot_contact(contact_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpotコンタクトを削除"""
     try:
         if not Config.validate_config():
@@ -544,7 +626,7 @@ async def delete_hubspot_contact(contact_id: str):
         raise HTTPException(status_code=500, detail=f"コンタクトの削除に失敗しました: {str(e)}")
 
 @app.get("/hubspot/companies", response_model=HubSpotResponse)
-async def get_hubspot_companies(limit: int = 100, after: Optional[str] = None):
+async def get_hubspot_companies(limit: int = 100, after: Optional[str] = None, api_key: str = Depends(verify_api_key)):
     """HubSpot会社一覧を取得"""
     try:
         if not Config.validate_config():
@@ -565,7 +647,7 @@ async def get_hubspot_companies(limit: int = 100, after: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"会社一覧の取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/companies/{company_id}", response_model=HubSpotResponse)
-async def get_hubspot_company(company_id: str):
+async def get_hubspot_company(company_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot会社詳細を取得"""
     try:
         if not Config.validate_config():
@@ -590,7 +672,7 @@ async def get_hubspot_company(company_id: str):
         raise HTTPException(status_code=500, detail=f"会社詳細の取得に失敗しました: {str(e)}")
 
 @app.post("/hubspot/companies", response_model=HubSpotResponse)
-async def create_hubspot_company(company_data: CompanyCreateRequest):
+async def create_hubspot_company(company_data: CompanyCreateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot会社を作成"""
     try:
         if not Config.validate_config():
@@ -615,7 +697,7 @@ async def create_hubspot_company(company_data: CompanyCreateRequest):
         raise HTTPException(status_code=500, detail=f"会社の作成に失敗しました: {str(e)}")
 
 @app.patch("/hubspot/companies/{company_id}", response_model=HubSpotResponse)
-async def update_hubspot_company(company_id: str, company_data: CompanyUpdateRequest):
+async def update_hubspot_company(company_id: str, company_data: CompanyUpdateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot会社情報を更新"""
     try:
         if not Config.validate_config():
@@ -640,7 +722,7 @@ async def update_hubspot_company(company_id: str, company_data: CompanyUpdateReq
         raise HTTPException(status_code=500, detail=f"会社情報の更新に失敗しました: {str(e)}")
 
 @app.delete("/hubspot/companies/{company_id}", response_model=HubSpotResponse)
-async def delete_hubspot_company(company_id: str):
+async def delete_hubspot_company(company_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot会社を削除"""
     try:
         if not Config.validate_config():
@@ -666,7 +748,7 @@ async def delete_hubspot_company(company_id: str):
 
 # HubSpot取引関連エンドポイント
 @app.get("/hubspot/deals", response_model=HubSpotResponse)
-async def get_hubspot_deals(limit: int = 100, after: Optional[str] = None):
+async def get_hubspot_deals(limit: int = 100, after: Optional[str] = None, api_key: str = Depends(verify_api_key)):
     """HubSpot取引一覧を取得"""
     try:
         if not Config.validate_config():
@@ -689,7 +771,7 @@ async def get_hubspot_deals(limit: int = 100, after: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"取引一覧の取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
-async def get_hubspot_deal(deal_id: str):
+async def get_hubspot_deal(deal_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot取引詳細を取得"""
     try:
         if not Config.validate_config():
@@ -714,7 +796,7 @@ async def get_hubspot_deal(deal_id: str):
         raise HTTPException(status_code=500, detail=f"取引情報の取得に失敗しました: {str(e)}")
 
 @app.post("/hubspot/deals", response_model=HubSpotResponse)
-async def create_hubspot_deal(deal_data: DealCreateRequest):
+async def create_hubspot_deal(deal_data: DealCreateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot取引を作成"""
     try:
         if not Config.validate_config():
@@ -739,7 +821,7 @@ async def create_hubspot_deal(deal_data: DealCreateRequest):
         raise HTTPException(status_code=500, detail=f"取引の作成に失敗しました: {str(e)}")
 
 @app.patch("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
-async def update_hubspot_deal(deal_id: str, deal_data: DealUpdateRequest):
+async def update_hubspot_deal(deal_id: str, deal_data: DealUpdateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot取引情報を更新"""
     try:
         if not Config.validate_config():
@@ -764,7 +846,7 @@ async def update_hubspot_deal(deal_id: str, deal_data: DealUpdateRequest):
         raise HTTPException(status_code=500, detail=f"取引情報の更新に失敗しました: {str(e)}")
 
 @app.delete("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
-async def delete_hubspot_deal(deal_id: str):
+async def delete_hubspot_deal(deal_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot取引を削除"""
     try:
         if not Config.validate_config():
@@ -790,7 +872,7 @@ async def delete_hubspot_deal(deal_id: str):
 
 # HubSpot物件情報関連エンドポイント
 @app.get("/hubspot/bukken", response_model=HubSpotResponse)
-async def get_hubspot_bukken_list(limit: int = 100, after: Optional[str] = None):
+async def get_hubspot_bukken_list(limit: int = 100, after: Optional[str] = None, api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報一覧を取得"""
     try:
         if not Config.validate_config():
@@ -813,7 +895,7 @@ async def get_hubspot_bukken_list(limit: int = 100, after: Optional[str] = None)
         raise HTTPException(status_code=500, detail=f"物件情報一覧の取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
-async def get_hubspot_bukken(bukken_id: str):
+async def get_hubspot_bukken(bukken_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報詳細を取得"""
     try:
         if not Config.validate_config():
@@ -838,7 +920,7 @@ async def get_hubspot_bukken(bukken_id: str):
         raise HTTPException(status_code=500, detail=f"物件情報の取得に失敗しました: {str(e)}")
 
 @app.post("/hubspot/bukken", response_model=HubSpotResponse)
-async def create_hubspot_bukken(bukken_data: BukkenCreateRequest):
+async def create_hubspot_bukken(bukken_data: BukkenCreateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報を作成"""
     try:
         if not Config.validate_config():
@@ -863,7 +945,7 @@ async def create_hubspot_bukken(bukken_data: BukkenCreateRequest):
         raise HTTPException(status_code=500, detail=f"物件情報の作成に失敗しました: {str(e)}")
 
 @app.patch("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
-async def update_hubspot_bukken(bukken_id: str, bukken_data: BukkenUpdateRequest):
+async def update_hubspot_bukken(bukken_id: str, bukken_data: BukkenUpdateRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報を更新"""
     try:
         if not Config.validate_config():
@@ -888,7 +970,7 @@ async def update_hubspot_bukken(bukken_id: str, bukken_data: BukkenUpdateRequest
         raise HTTPException(status_code=500, detail=f"物件情報の更新に失敗しました: {str(e)}")
 
 @app.delete("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
-async def delete_hubspot_bukken(bukken_id: str):
+async def delete_hubspot_bukken(bukken_id: str, api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報を削除"""
     try:
         if not Config.validate_config():
@@ -961,10 +1043,33 @@ async def delete_hubspot_bukken(bukken_id: str):
                     }
                 }
             }
+        },
+        401: {
+            "description": "認証エラー",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "missing_api_key": {
+                            "summary": "APIキーが未提供",
+                            "description": "X-API-Keyヘッダーが提供されていません",
+                            "value": {
+                                "detail": "API key is required. Please provide X-API-Key header."
+                            }
+                        },
+                        "invalid_api_key": {
+                            "summary": "無効なAPIキー",
+                            "description": "提供されたAPIキーが無効です",
+                            "value": {
+                                "detail": "Invalid API key. Please check your X-API-Key header."
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 )
-async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
+async def search_hubspot_bukken(search_criteria: BukkenSearchRequest, api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報を検索"""
     try:
         if not Config.validate_config():
@@ -1032,7 +1137,7 @@ async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
         )
 
 @app.get("/hubspot/bukken/schema", response_model=HubSpotResponse)
-async def get_hubspot_bukken_schema():
+async def get_hubspot_bukken_schema(api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報カスタムオブジェクトのスキーマを取得"""
     try:
         if not Config.validate_config():
@@ -1057,7 +1162,7 @@ async def get_hubspot_bukken_schema():
         raise HTTPException(status_code=500, detail=f"物件情報スキーマの取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/bukken/properties", response_model=HubSpotResponse)
-async def get_hubspot_bukken_properties():
+async def get_hubspot_bukken_properties(api_key: str = Depends(verify_api_key)):
     """HubSpot物件情報カスタムオブジェクトのプロパティ一覧を取得"""
     try:
         if not Config.validate_config():
@@ -1106,6 +1211,111 @@ async def hubspot_debug():
         "message": "HubSpot設定のデバッグ情報",
         "data": debug_info
     }
+
+# APIキー管理エンドポイント
+@app.post("/api-keys", response_model=APIKeyCreateResponse)
+async def create_api_key(request: APIKeyCreateRequest):
+    """新しいAPIキーを作成"""
+    try:
+        result = await api_key_manager.create_api_key(
+            site_name=request.site_name,
+            description=request.description,
+            expires_days=request.expires_days
+        )
+        return APIKeyCreateResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"APIキーの作成に失敗しました: {str(e)}"
+        )
+
+@app.get("/api-keys", response_model=List[APIKeyResponse])
+async def get_api_keys(include_inactive: bool = False):
+    """APIキー一覧を取得"""
+    try:
+        api_keys = await api_key_manager.get_api_keys(include_inactive=include_inactive)
+        return [APIKeyResponse(**key) for key in api_keys]
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"APIキー一覧の取得に失敗しました: {str(e)}"
+        )
+
+@app.get("/api-keys/{site_name}", response_model=APIKeyResponse)
+async def get_api_key_by_site(site_name: str):
+    """サイト名でAPIキー情報を取得"""
+    try:
+        api_key = await api_key_manager.get_api_key_by_site(site_name)
+        if not api_key:
+            raise HTTPException(
+                status_code=404,
+                detail=f"サイト '{site_name}' のAPIキーが見つかりません"
+            )
+        return APIKeyResponse(**api_key)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"APIキー情報の取得に失敗しました: {str(e)}"
+        )
+
+@app.patch("/api-keys/{site_name}/deactivate")
+async def deactivate_api_key(site_name: str):
+    """APIキーを無効化"""
+    try:
+        success = await api_key_manager.deactivate_api_key(site_name)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"サイト '{site_name}' のAPIキーが見つかりません"
+            )
+        return {"message": f"サイト '{site_name}' のAPIキーを無効化しました"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"APIキーの無効化に失敗しました: {str(e)}"
+        )
+
+@app.patch("/api-keys/{site_name}/activate")
+async def activate_api_key(site_name: str):
+    """APIキーを有効化"""
+    try:
+        success = await api_key_manager.activate_api_key(site_name)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"サイト '{site_name}' のAPIキーが見つかりません"
+            )
+        return {"message": f"サイト '{site_name}' のAPIキーを有効化しました"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"APIキーの有効化に失敗しました: {str(e)}"
+        )
+
+@app.delete("/api-keys/{site_name}")
+async def delete_api_key(site_name: str):
+    """APIキーを削除"""
+    try:
+        success = await api_key_manager.delete_api_key(site_name)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"サイト '{site_name}' のAPIキーが見つかりません"
+            )
+        return {"message": f"サイト '{site_name}' のAPIキーを削除しました"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"APIキーの削除に失敗しました: {str(e)}"
+        )
 
 if __name__ == "__main__":
     # 開発用サーバーの起動

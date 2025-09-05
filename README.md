@@ -93,6 +93,51 @@ HUBSPOT_API_KEY=your-actual-hubspot-api-key
 HUBSPOT_ID=your-actual-hubspot-id
 ```
 
+### MySQLデータベース設定
+
+APIキー管理にMySQLデータベースを使用します：
+
+```bash
+# MySQLデータベース設定
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your-mysql-password
+MYSQL_DATABASE=mirai_base
+MYSQL_CHARSET=utf8mb4
+```
+
+### データベースの初期化
+
+```bash
+# MySQLに接続してデータベースを初期化
+mysql -u root -p < database/init.sql
+```
+
+## 認証について
+
+このAPIは**データベースベースのAPIキー認証**を使用しています。
+
+### 認証の仕組み
+
+1. **APIキーの生成**: `/api-keys` エンドポイントでサイトごとにAPIキーを作成
+2. **データベース保存**: APIキーはハッシュ化されてMySQLデータベースに保存
+3. **認証検証**: すべてのリクエストで`X-API-Key`ヘッダーを検証
+4. **使用履歴**: 最終使用日時を自動記録
+
+### 認証ヘッダー
+
+すべてのAPIリクエストに以下のヘッダーを含める必要があります：
+
+```bash
+X-API-Key: your-actual-api-key-here
+```
+
+### 認証エラー
+
+- **401 Unauthorized**: APIキーが未提供または無効
+- **エラーメッセージ**: `"API key is required"` または `"Invalid API key"`
+
 ## エンドポイント
 
 ### 基本エンドポイント
@@ -127,6 +172,41 @@ HUBSPOT_ID=your-actual-hubspot-id
 #### API情報
 - **URL**: `GET /api/info`
 - **説明**: 利用可能なエンドポイントの一覧
+
+### APIキー管理エンドポイント
+
+#### APIキー作成
+- **URL**: `POST /api-keys`
+- **説明**: 新しいAPIキーを作成
+- **リクエストボディ**:
+  ```json
+  {
+    "site_name": "example-site",
+    "description": "テスト用APIキー",
+    "expires_days": 365
+  }
+  ```
+
+#### APIキー一覧取得
+- **URL**: `GET /api-keys`
+- **説明**: APIキー一覧を取得
+- **パラメータ**: `include_inactive` (オプション) - 無効なキーも含める
+
+#### APIキー情報取得
+- **URL**: `GET /api-keys/{site_name}`
+- **説明**: 指定されたサイトのAPIキー情報を取得
+
+#### APIキー無効化
+- **URL**: `PATCH /api-keys/{site_name}/deactivate`
+- **説明**: 指定されたサイトのAPIキーを無効化
+
+#### APIキー有効化
+- **URL**: `PATCH /api-keys/{site_name}/activate`
+- **説明**: 指定されたサイトのAPIキーを有効化
+
+#### APIキー削除
+- **URL**: `DELETE /api-keys/{site_name}`
+- **説明**: 指定されたサイトのAPIキーを削除
 
 ### HubSpot API エンドポイント
 
