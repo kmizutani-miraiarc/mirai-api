@@ -20,9 +20,9 @@ sudo useradd -r -s /bin/false mirai-api || true
 
 # アプリケーションディレクトリの設定
 echo "アプリケーションディレクトリを設定中..."
-sudo mkdir -p /opt/mirai-api
-sudo mkdir -p /opt/mirai-api/logs
-sudo chown -R mirai-api:mirai-api /opt/mirai-api
+sudo mkdir -p /var/www/mirai-api
+sudo mkdir -p /var/www/mirai-api/logs
+sudo chown -R mirai-api:mirai-api /var/www/mirai-api
 
 # 必要なディレクトリの作成
 mkdir -p logs
@@ -30,18 +30,18 @@ mkdir -p ssl
 
 # Python仮想環境の作成
 echo "Python仮想環境を作成中..."
-cd /opt/mirai-api
+cd /var/www/mirai-api
 sudo -u mirai-api python3 -m venv venv
 
 # 依存関係のインストール
 echo "Python依存関係をインストール中..."
-sudo -u mirai-api /opt/mirai-api/venv/bin/pip install --upgrade pip
-sudo -u mirai-api /opt/mirai-api/venv/bin/pip install -r requirements.txt
+sudo -u mirai-api /var/www/mirai-api/venv/bin/pip install --upgrade pip
+sudo -u mirai-api /var/www/mirai-api/venv/bin/pip install -r requirements.txt
 
 # アプリケーションファイルのコピー
 echo "アプリケーションファイルをコピー中..."
-sudo cp -r /path/to/your/mirai-api/* /opt/mirai-api/
-sudo chown -R mirai-api:mirai-api /opt/mirai-api
+sudo cp -r /path/to/your/mirai-api/* /var/www/mirai-api/
+sudo chown -R mirai-api:mirai-api /var/www/mirai-api
 
 # systemdサービスの設定
 echo "systemdサービスを設定中..."

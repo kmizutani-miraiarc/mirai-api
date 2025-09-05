@@ -1,8 +1,8 @@
-# Mirai API 直接実行デプロイ手順書（Docker不使用）
+# Mirai API 本番デプロイ手順書
 
 ## 概要
 
-このドキュメントでは、Dockerを使わずにMirai APIサーバーをAlmaLinux 9環境の本番サーバーに直接Pythonで実行する手順を説明します。
+このドキュメントでは、Mirai APIサーバーをAlmaLinux 9環境の本番サーバーに直接Pythonで実行する手順を説明します。
 
 ## 前提条件
 
@@ -46,28 +46,28 @@ sudo systemctl enable nginx
 
 ```bash
 # アプリケーションディレクトリの作成
-sudo mkdir -p /opt/mirai-api
-sudo mkdir -p /opt/mirai-api/logs
+sudo mkdir -p /var/www/mirai-api
+sudo mkdir -p /var/www/mirai-api/logs
 
 # 専用ユーザーの作成
 sudo useradd -r -s /bin/false mirai-api
 
 # ディレクトリの所有権設定
-sudo chown -R mirai-api:mirai-api /opt/mirai-api
+sudo chown -R mirai-api:mirai-api /var/www/mirai-api
 ```
 
 ### 2.2 アプリケーションファイルの配置
 
 ```bash
 # アプリケーションディレクトリに移動
-cd /opt/mirai-api
+cd /var/www/mirai-api
 
 # Gitリポジトリからクローン（またはファイルをアップロード）
 sudo -u mirai-api git clone <your-repository-url> .
 
 # または、ローカルからファイルをコピー
-# sudo cp -r /path/to/mirai-api/* /opt/mirai-api/
-# sudo chown -R mirai-api:mirai-api /opt/mirai-api
+# sudo cp -r /path/to/mirai-api/* /var/www/mirai-api/
+# sudo chown -R mirai-api:mirai-api /var/www/mirai-api
 ```
 
 ### 2.3 Python仮想環境の作成
@@ -77,8 +77,8 @@ sudo -u mirai-api git clone <your-repository-url> .
 sudo -u mirai-api python3 -m venv venv
 
 # 仮想環境の有効化と依存関係のインストール
-sudo -u mirai-api /opt/mirai-api/venv/bin/pip install --upgrade pip
-sudo -u mirai-api /opt/mirai-api/venv/bin/pip install -r requirements.txt
+sudo -u mirai-api /var/www/mirai-api/venv/bin/pip install --upgrade pip
+sudo -u mirai-api /var/www/mirai-api/venv/bin/pip install -r requirements.txt
 ```
 
 ### 2.4 環境変数の設定
@@ -134,7 +134,26 @@ sudo crontab -e
 
 ## 4. Nginx設定
 
-### 4.1 Nginx設定ファイルの配置
+### 4.1 設定方法の選択
+
+Nginx設定には3つの方法があります：
+
+#### 方法0: 自動設定スクリプト（既存Nginx環境推奨）
+
+```bash
+# 既存Nginx環境用の自動設定スクリプトを実行
+./nginx-setup-existing.sh
+```
+
+スクリプトが自動的に以下を実行します：
+- 既存設定のバックアップ
+- conf.dディレクトリの確認・作成
+- nginx.confへのinclude追加
+- mirai-api.confの配置
+- SSL証明書の設定（オプション）
+- ドメイン名の設定
+
+#### 方法A: 完全なnginx.conf置き換え（新規インストール推奨）
 
 ```bash
 # Nginx設定ファイルのコピー
@@ -145,6 +164,38 @@ sudo nano /etc/nginx/nginx.conf
 ```
 
 `server_name _;` を `server_name your-domain.com;` に変更
+
+#### 方法B: conf.dディレクトリに追加（既存Nginx環境推奨）
+
+```bash
+# conf.dディレクトリの確認
+ls -la /etc/nginx/conf.d/
+
+# mirai-api.confをコピー
+sudo cp nginx/conf.d/mirai-api.conf /etc/nginx/conf.d/
+
+# ドメイン名の設定
+sudo nano /etc/nginx/conf.d/mirai-api.conf
+```
+
+`your-domain.com`を実際のドメイン名に変更
+
+```bash
+# nginx.confにconf.dのincludeが含まれているか確認
+sudo nano /etc/nginx/nginx.conf
+```
+
+`http`ブロック内に以下が含まれていることを確認：
+```nginx
+http {
+    # 既存の設定...
+    
+    # conf.dディレクトリのinclude（追加が必要な場合）
+    include /etc/nginx/conf.d/*.conf;
+    
+    # 既存の設定...
+}
+```
 
 ### 4.2 Nginx設定のテスト
 
@@ -227,11 +278,11 @@ curl -f http://localhost/docs
 
 ```bash
 # 新しいバージョンのデプロイ
-cd /opt/mirai-api
+cd /var/www/mirai-api
 sudo -u mirai-api git pull origin main
 
 # 依存関係の更新
-sudo -u mirai-api /opt/mirai-api/venv/bin/pip install -r requirements.txt
+sudo -u mirai-api /var/www/mirai-api/venv/bin/pip install -r requirements.txt
 
 # サービスの再起動
 sudo systemctl restart mirai-api
@@ -246,7 +297,7 @@ sudo nano /etc/logrotate.d/mirai-api
 
 以下の内容を追加：
 ```
-/opt/mirai-api/logs/*.log {
+/var/www/mirai-api/logs/*.log {
     daily
     missingok
     rotate 30
@@ -290,9 +341,9 @@ worker_connections 1024;  # 必要に応じて増加
 
 ```bash
 # アプリケーションファイルの権限設定
-sudo chmod 755 /opt/mirai-api
-sudo chmod 644 /opt/mirai-api/*.py
-sudo chmod 600 /opt/mirai-api/.env.prod
+sudo chmod 755 /var/www/mirai-api
+sudo chmod 644 /var/www/mirai-api/*.py
+sudo chmod 600 /var/www/mirai-api/.env.prod
 ```
 
 ### 10.2 SELinuxの設定
@@ -326,10 +377,10 @@ sudo netstat -tlnp | grep :80
 #### 権限エラー
 ```bash
 # ファイルの所有権確認
-ls -la /opt/mirai-api/
+ls -la /var/www/mirai-api/
 
 # 所有権の修正
-sudo chown -R mirai-api:mirai-api /opt/mirai-api
+sudo chown -R mirai-api:mirai-api /var/www/mirai-api
 ```
 
 ### 11.2 パフォーマンス問題
@@ -347,47 +398,24 @@ top
 #### ログファイルのサイズ確認
 ```bash
 # ログファイルのサイズ
-du -sh /opt/mirai-api/logs/
+du -sh /var/www/mirai-api/logs/
 du -sh /var/log/nginx/
 ```
 
-## 12. Docker vs 直接実行の比較
+## 12. アーキテクチャの特徴
 
-### Docker使用の場合
-**メリット:**
-- 環境の一貫性
-- 依存関係の分離
-- 簡単なデプロイとロールバック
-- スケーラビリティ
+### 直接実行のメリット
+- **軽量**: コンテナオーバーヘッドなし
+- **直接的なデバッグ**: システムログとの統合
+- **リソース効率**: システムリソースの最適利用
+- **シンプルな構成**: 管理が容易
+- **高速起動**: 起動時間が短い
 
-**デメリット:**
-- 追加のリソース使用
-- Dockerの学習コスト
-- デバッグの複雑さ
-
-### 直接実行の場合
-**メリット:**
-- 軽量（Dockerオーバーヘッドなし）
-- 直接的なデバッグ
-- システムリソースの効率的利用
-- シンプルな構成
-
-**デメリット:**
-- 環境依存性
-- 依存関係の管理が複雑
-- デプロイの複雑さ
-
-## 13. 推奨事項
-
-### 小規模・シンプルな環境
-- **直接実行**を推奨
-- リソース効率が重要
-- シンプルな管理を希望
-
-### 大規模・複雑な環境
-- **Docker**を推奨
-- 複数環境での一貫性が重要
-- スケーラビリティが必要
+### セキュリティ機能
+- **非root実行**: 専用ユーザーでの実行
+- **systemd統合**: システムサービスとして管理
+- **ファイル権限制御**: 適切な権限設定
+- **SELinux対応**: セキュリティポリシー適用
 
 ---
 

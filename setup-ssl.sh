@@ -37,7 +37,7 @@ sudo chown -R $(whoami):$(whoami) ssl/
 
 # 自動更新の設定
 echo "自動更新を設定中..."
-sudo crontab -l 2>/dev/null | { cat; echo "0 12 * * * /usr/bin/certbot renew --quiet && cd /opt/mirai-api && sudo cp /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem ssl/cert.pem && sudo cp /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem ssl/key.pem && sudo chown -R $(whoami):$(whoami) ssl/ && docker-compose -f docker-compose.prod.yml restart nginx"; } | sudo crontab -
+sudo crontab -l 2>/dev/null | { cat; echo "0 12 * * * /usr/bin/certbot renew --quiet && cd /var/www/mirai-api && sudo cp /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem ssl/cert.pem && sudo cp /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem ssl/key.pem && sudo chown -R $(whoami):$(whoami) ssl/ && sudo systemctl reload nginx"; } | sudo crontab -
 
 echo "SSL証明書設定が完了しました！"
 echo "証明書の有効期限:"
@@ -45,6 +45,5 @@ sudo certbot certificates
 
 echo ""
 echo "次のステップ:"
-echo "1. docker-compose.prod.ymlでドメイン名を更新"
-echo "2. nginx/nginx.confでserver_nameを更新"
-echo "3. サービスを起動: sudo systemctl start mirai-api"
+echo "1. nginx/nginx-direct.confでserver_nameを更新"
+echo "2. サービスを起動: sudo systemctl start mirai-api"

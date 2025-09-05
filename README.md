@@ -1,18 +1,20 @@
 # Mirai API Server
 
-AlmaLinuxで動作するPython APIサーバーです。FastAPIを使用して構築されています。Dockerコンテナとしても実行可能です。
+AlmaLinuxで動作するPython APIサーバーです。FastAPIを使用して構築されています。HubSpot APIとの統合機能を提供します。
 
 ## 機能
 
+- HubSpot API統合（Owners、Contacts、Companies、Deals、Custom Objects）
+- 物件情報（bukken）のCRUD操作
+- 物件検索機能（物件名、都道府県、市区町村での検索）
 - 外部からのAPIアクセスに対応
 - JSONレスポンスを返すテストエンドポイント
 - ヘルスチェック機能
 - CORS対応
-- Dockerコンテナ対応
 
 ## セットアップ
 
-### 方法1: Dockerを使用（推奨）
+### ローカル開発環境（Docker使用）
 
 #### 前提条件
 - Docker
@@ -34,24 +36,34 @@ docker-compose up --build
 docker-compose down
 ```
 
-### 方法2: 直接実行
+### 本番環境（直接実行）
 
-#### 1. 依存関係のインストール
+本番環境でのデプロイについては、詳細な手順書を参照してください：
+
+- **基本デプロイ**: `DEPLOYMENT-DIRECT.md`
+- **既存Nginx環境**: `NGINX-EXISTING-SETUP.md`
+
+#### Nginx設定の選択肢
+
+1. **自動設定（推奨）**: `./nginx-setup-existing.sh` - 既存Nginx環境に自動設定
+2. **手動設定**: `nginx/conf.d/mirai-api.conf` - conf.dディレクトリに追加
+3. **完全置き換え**: `nginx/nginx-direct.conf` - nginx.confを完全置き換え
+
+#### クイックスタート
 
 ```bash
+# 自動デプロイスクリプトの実行
+./deploy-direct.sh
+```
+
+#### 手動セットアップ
+
+```bash
+# 1. 依存関係のインストール
 pip install -r requirements.txt
-```
 
-#### 2. サーバーの起動
-
-```bash
-python main.py
-```
-
-または
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# 2. サーバーの起動
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 ## 環境変数設定
