@@ -375,7 +375,7 @@ sudo nginx -T | grep -A 10 -B 5 "mirai-api"
 
 ```bash
 # サービスファイルをコピー
-sudo cp mirai-api-direct.service /etc/systemd/system/
+sudo cp mirai-api.service /etc/systemd/system/
 
 # systemdの設定をリロード
 sudo systemctl daemon-reload
