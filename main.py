@@ -974,7 +974,8 @@ async def get_hubspot_bukken(bukken_id: str, api_key: str = Depends(verify_api_k
         return HubSpotResponse(
             status="success",
             message="物件情報を正常に取得しました",
-            data={"bukken": bukken}
+            data={"bukken": bukken},
+            count=1
         )
     except HTTPException:
         raise
@@ -1024,7 +1025,8 @@ async def update_hubspot_bukken(bukken_id: str, bukken_data: BukkenUpdateRequest
         return HubSpotResponse(
             status="success",
             message="物件情報を正常に更新しました",
-            data={"bukken": bukken}
+            data={"bukken": bukken},
+            count=1
         )
     except HTTPException:
         raise
@@ -1049,7 +1051,8 @@ async def delete_hubspot_bukken(bukken_id: str, api_key: str = Depends(verify_ap
         return HubSpotResponse(
             status="success",
             message="物件情報を正常に削除しました",
-            data={"bukken_id": bukken_id}
+            data={"bukken_id": bukken_id},
+            count=1
         )
     except HTTPException:
         raise

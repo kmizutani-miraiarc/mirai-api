@@ -160,42 +160,48 @@ class HubSpotDealsClient(HubSpotBaseClient):
     async def get_deals_by_bukken(self, bukken_id: str) -> List[Dict[str, Any]]:
         """物件に関連づけられた取引を取得"""
         try:
-            # 物件と取引の関連を検索
-            search_criteria = {
-                "filterGroups": [
-                    {
-                        "filters": [
-                            {
-                                "propertyName": "associated_bukken",
-                                "operator": "EQ",
-                                "value": bukken_id
-                            }
-                        ]
-                    }
-                ],
-                "properties": [
-                    "dealname",
-                    "pipeline",
-                    "dealstage",
-                    "hubspot_owner_id",
-                    "amount",
-                    "closedate",
-                    "createdate",
-                    "hs_lastmodifieddate"
-                ],
-                "limit": 100
-            }
+            # HubSpotの関連オブジェクトAPIを使用して物件に関連づけられた取引を取得
+            # 物件オブジェクトタイプID: 2-39155607 (bukken)
+            # 取引オブジェクトタイプID: deals
             
-            logger.info(f"Searching deals for bukken {bukken_id}")
-            result = await self._make_request("POST", "/crm/v3/objects/deals/search", json=search_criteria)
-            results = result.get("results", [])
-            logger.info(f"Found {len(results)} deals for bukken {bukken_id}")
-            return results
+            logger.info(f"Getting associated deals for bukken {bukken_id}")
+            result = await self._make_request(
+                "GET", 
+                f"/crm/v4/objects/2-39155607/{bukken_id}/associations/deals",
+                params={"limit": 100}
+            )
+            
+            # 関連オブジェクトのIDを取得
+            associations = result.get("results", [])
+            deal_ids = [assoc.get("toObjectId") for assoc in associations if assoc.get("toObjectId")]
+            
+            if not deal_ids:
+                logger.info(f"No deals associated with bukken {bukken_id}")
+                return []
+            
+            logger.info(f"Found {len(deal_ids)} deal associations for bukken {bukken_id}")
+            
+            # 各取引の詳細情報を取得
+            deals = []
+            for deal_id in deal_ids:
+                try:
+                    deal = await self.get_deal_by_id(deal_id)
+                    if deal:
+                        deals.append(deal)
+                except Exception as e:
+                    logger.warning(f"Failed to get deal {deal_id}: {str(e)}")
+                    continue
+            
+            logger.info(f"Retrieved {len(deals)} deal details for bukken {bukken_id}")
+            return deals
+            
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 logger.error("HubSpot API認証エラー: 有効なAPIキーを設定してください")
+            elif e.response.status_code == 404:
+                logger.error(f"Bukken {bukken_id} not found or no associations")
             elif e.response.status_code == 400:
-                logger.error(f"Invalid search criteria for bukken {bukken_id}: {e.response.text}")
+                logger.error(f"Invalid request for bukken {bukken_id}: {e.response.text}")
             else:
                 logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
             return []
