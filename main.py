@@ -286,6 +286,65 @@ class APIKeyCreateResponse(BaseModel):
     expires_at: Optional[str]
     created_at: str
 
+class DealSearchRequest(BaseModel):
+    """取引検索リクエスト"""
+    dealname: Optional[str] = Field(
+        default=None,
+        example="",
+        description="取引名（部分一致検索）"
+    )
+    pipeline: Optional[str] = Field(
+        default=None,
+        example="",
+        description="パイプラインID（完全一致検索）"
+    )
+    dealstage: Optional[str] = Field(
+        default=None,
+        example="",
+        description="ステージID（完全一致検索）"
+    )
+    hubspot_owner_id: Optional[str] = Field(
+        default=None,
+        example="",
+        description="取引担当者ID（完全一致検索）"
+    )
+    query: Optional[str] = Field(
+        default=None,
+        example="",
+        description="検索クエリ（空文字列またはnullで全件検索）"
+    )
+    properties: Optional[List[str]] = Field(
+        default=[
+            "dealname",
+            "pipeline",
+            "dealstage",
+            "hubspot_owner_id",
+            "amount",
+            "closedate",
+            "createdate",
+            "hs_lastmodifieddate"
+        ],
+        example=[
+            "dealname",
+            "pipeline",
+            "dealstage",
+            "hubspot_owner_id",
+            "amount",
+            "closedate"
+        ],
+        description="取得するプロパティ"
+    )
+    limit: Optional[int] = Field(
+        default=100,
+        example=100,
+        description="取得件数上限"
+    )
+    after: Optional[str] = Field(
+        default=None,
+        example="",
+        description="ページネーション用のカーソル（空文字列またはnullで最初から検索）"
+    )
+
 # HubSpotクライアントのインスタンス
 hubspot_owners_client = HubSpotOwnersClient()
 hubspot_contacts_client = HubSpotContactsClient()
@@ -354,6 +413,10 @@ async def api_info():
             {"path": "/hubspot/deals/{deal_id}", "method": "GET", "description": "HubSpot取引詳細取得"},
             {"path": "/hubspot/deals/{deal_id}", "method": "PATCH", "description": "HubSpot取引情報更新"},
             {"path": "/hubspot/deals/{deal_id}", "method": "DELETE", "description": "HubSpot取引削除"},
+            {"path": "/hubspot/deals/search", "method": "POST", "description": "HubSpot取引検索（パイプライン、取引名、ステージ、取引担当者で検索）"},
+            {"path": "/hubspot/pipelines", "method": "GET", "description": "HubSpotパイプライン一覧取得"},
+            {"path": "/hubspot/pipelines/{pipeline_id}/stages", "method": "GET", "description": "HubSpotパイプラインに紐づくステージ一覧取得"},
+            {"path": "/hubspot/bukken/{bukken_id}/deals", "method": "GET", "description": "HubSpot物件に関連づけられた取引取得"},
             {"path": "/hubspot/bukken", "method": "GET", "description": "HubSpot物件情報一覧取得"},
             {"path": "/hubspot/bukken", "method": "POST", "description": "HubSpot物件情報作成"},
             {"path": "/hubspot/bukken/{bukken_id}", "method": "GET", "description": "HubSpot物件情報詳細取得"},
@@ -1315,6 +1378,190 @@ async def delete_api_key(site_name: str):
         raise HTTPException(
             status_code=500,
             detail=f"APIキーの削除に失敗しました: {str(e)}"
+        )
+
+# 新しい取引関連APIエンドポイント
+
+@app.post(
+    "/hubspot/deals/search", 
+    response_model=HubSpotResponse,
+    responses={
+        200: {
+            "description": "取引検索が正常に実行されました",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "success": {
+                            "summary": "検索成功（10件の取引を取得）",
+                            "description": "取引検索が正常に実行され、10件の取引が取得されました",
+                            "value": {
+                                "status": "success",
+                                "message": "取引検索を正常に実行しました（10件の取引を取得）",
+                                "data": {"results": []},
+                                "count": 10
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
+async def search_hubspot_deals(search_criteria: DealSearchRequest, api_key: str = Depends(verify_api_key)):
+    """HubSpot取引を検索（パイプライン、取引名、ステージ、取引担当者で検索）"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        search_data = search_criteria.dict()
+        
+        # 新しいパラメーターからfilterGroupsを構築
+        filters = []
+        
+        # 取引名の部分一致検索
+        if search_data.get('dealname') and search_data.get('dealname').strip():
+            filters.append({
+                "propertyName": "dealname",
+                "operator": "CONTAINS_TOKEN",
+                "value": search_data.get('dealname').strip()
+            })
+        
+        # パイプラインの完全一致検索
+        if search_data.get('pipeline') and search_data.get('pipeline').strip():
+            filters.append({
+                "propertyName": "pipeline",
+                "operator": "EQ",
+                "value": search_data.get('pipeline').strip()
+            })
+        
+        # ステージの完全一致検索
+        if search_data.get('dealstage') and search_data.get('dealstage').strip():
+            filters.append({
+                "propertyName": "dealstage",
+                "operator": "EQ",
+                "value": search_data.get('dealstage').strip()
+            })
+        
+        # 取引担当者の完全一致検索
+        if search_data.get('hubspot_owner_id') and search_data.get('hubspot_owner_id').strip():
+            filters.append({
+                "propertyName": "hubspot_owner_id",
+                "operator": "EQ",
+                "value": search_data.get('hubspot_owner_id').strip()
+            })
+        
+        # 新しいパラメーターでフィルターが構築された場合、filterGroupsを上書き
+        if filters:
+            search_data['filterGroups'] = [{"filters": filters}]
+        
+        logger.info(f"Deal search request received: {search_data}")
+        logger.info(f"Search criteria details - filterGroups: {search_data.get('filterGroups', [])}")
+        logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
+        logger.info(f"Search criteria details - limit: {search_data.get('limit', 100)}")
+        
+        results = await hubspot_deals_client.search_deals(search_data)
+        logger.info(f"Deal search completed. Found {len(results)} results")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"取引検索を正常に実行しました（{len(results)}件の取引を取得）",
+            data={"results": results},
+            count=len(results)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to search deals: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"取引検索に失敗しました: {str(e)}"
+        )
+
+@app.get("/hubspot/pipelines", response_model=HubSpotResponse)
+async def get_hubspot_pipelines(api_key: str = Depends(verify_api_key)):
+    """パイプライン一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        pipelines = await hubspot_deals_client.get_pipelines()
+        logger.info(f"Retrieved {len(pipelines)} pipelines")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"パイプライン一覧を正常に取得しました（{len(pipelines)}件のパイプライン）",
+            data={"pipelines": pipelines},
+            count=len(pipelines)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get pipelines: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"パイプライン一覧の取得に失敗しました: {str(e)}"
+        )
+
+@app.get("/hubspot/pipelines/{pipeline_id}/stages", response_model=HubSpotResponse)
+async def get_hubspot_pipeline_stages(pipeline_id: str, api_key: str = Depends(verify_api_key)):
+    """パイプラインに紐づくステージ一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        stages = await hubspot_deals_client.get_pipeline_stages(pipeline_id)
+        logger.info(f"Retrieved {len(stages)} stages for pipeline {pipeline_id}")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"パイプライン '{pipeline_id}' のステージ一覧を正常に取得しました（{len(stages)}件のステージ）",
+            data={"stages": stages, "pipeline_id": pipeline_id},
+            count=len(stages)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get pipeline stages for {pipeline_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"パイプライン '{pipeline_id}' のステージ一覧取得に失敗しました: {str(e)}"
+        )
+
+@app.get("/hubspot/bukken/{bukken_id}/deals", response_model=HubSpotResponse)
+async def get_hubspot_bukken_deals(bukken_id: str, api_key: str = Depends(verify_api_key)):
+    """物件に関連づけられた取引を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        deals = await hubspot_deals_client.get_deals_by_bukken(bukken_id)
+        logger.info(f"Retrieved {len(deals)} deals for bukken {bukken_id}")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"物件 '{bukken_id}' に関連づけられた取引を正常に取得しました（{len(deals)}件の取引）",
+            data={"deals": deals, "bukken_id": bukken_id},
+            count=len(deals)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get deals for bukken {bukken_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"物件 '{bukken_id}' の取引取得に失敗しました: {str(e)}"
         )
 
 if __name__ == "__main__":
