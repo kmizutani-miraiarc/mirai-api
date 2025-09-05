@@ -40,14 +40,26 @@ docker-compose down
 
 本番環境でのデプロイについては、詳細な手順書を参照してください：
 
+- **📚 ドキュメント一覧**: `DOCUMENTATION-INDEX.md` - 全ドキュメントの用途と選択指針
+- **完全統合手順書**: `DEPLOYMENT-GUIDE-COMPLETE.md` （推奨）
 - **基本デプロイ**: `DEPLOYMENT-DIRECT.md`
 - **既存Nginx環境**: `NGINX-EXISTING-SETUP.md`
+- **既存SSL証明書環境**: `SSL-EXISTING-CERT.md`
+- **Let's Encrypt認証エラー**: `LETSENCRYPT-TROUBLESHOOTING.md`
 
 #### Nginx設定の選択肢
 
 1. **自動設定（推奨）**: `./nginx-setup-existing.sh` - 既存Nginx環境に自動設定
 2. **手動設定**: `nginx/conf.d/mirai-api.conf` - conf.dディレクトリに追加
 3. **完全置き換え**: `nginx/nginx-direct.conf` - nginx.confを完全置き換え
+
+#### SSL証明書の設定
+
+既存のSSL証明書がある場合：
+
+1. **自動設定**: `./setup-ssl-existing.sh` - 既存証明書環境に自動設定
+2. **手動設定**: `SSL-EXISTING-CERT.md` を参照
+3. **新規証明書**: `./setup-ssl.sh` - 新規で証明書を取得
 
 #### クイックスタート
 
