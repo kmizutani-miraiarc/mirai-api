@@ -40,8 +40,17 @@ docker-compose down
 
 本番環境でのデプロイについては、詳細な手順書を参照してください：
 
+### 🚀 自動デプロイ（GitHub Actions）
+
+**推奨**: mainブランチにPushすると自動でサーバーにデプロイされます。
+
+- **GitHub Actions自動デプロイ**: `DEPLOYMENT-GITHUB-ACTIONS.md` （推奨）
+- **GitHub Actions設定ガイド**: `docs/github-actions-setup.md`
+
+### 📚 手動デプロイ
+
 - **📚 ドキュメント一覧**: `DOCUMENTATION-INDEX.md` - 全ドキュメントの用途と選択指針
-- **完全統合手順書**: `DEPLOYMENT-GUIDE-COMPLETE.md` （推奨）
+- **完全統合手順書**: `DEPLOYMENT-GUIDE-COMPLETE.md`
 - **基本デプロイ**: `DEPLOYMENT-DIRECT.md`
 - **既存Nginx環境**: `NGINX-EXISTING-SETUP.md`
 - **既存SSL証明書環境**: `SSL-EXISTING-CERT.md`
