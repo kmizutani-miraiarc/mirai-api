@@ -1,0 +1,29 @@
+[Unit]
+Description=Mirai API Server (Direct Python)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=mirai-api
+Group=mirai-api
+WorkingDirectory=/opt/mirai-api
+Environment=PATH=/opt/mirai-api/venv/bin
+ExecStart=/opt/mirai-api/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mirai-api
+
+# セキュリティ設定
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mirai-api/logs
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
