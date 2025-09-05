@@ -53,11 +53,10 @@ jobs:
           fi
           
           # Gitから最新のコードを取得
-          sudo -u www-data git fetch origin
-          sudo -u www-data git reset --hard origin/main
+          git fetch origin
+          git reset --hard origin/main
           
           # 権限を設定
-          sudo chown -R www-data:www-data .
           sudo chmod -R 755 .
           
           # 仮想環境を作成・更新
