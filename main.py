@@ -125,6 +125,24 @@ class BukkenUpdateRequest(BaseModel):
 
 class BukkenSearchRequest(BaseModel):
     """物件情報検索リクエスト"""
+    # 検索パラメーター
+    bukken_name: Optional[str] = Field(
+        default=None,
+        example="",
+        description="物件名（部分一致検索）"
+    )
+    bukken_state: Optional[str] = Field(
+        default=None,
+        example="",
+        description="都道府県（完全一致検索）"
+    )
+    bukken_city: Optional[str] = Field(
+        default=None,
+        example="",
+        description="市区町村（完全一致検索）"
+    )
+    
+    # 従来のパラメーター
     filterGroups: List[Dict[str, Any]] = Field(
         default=[],
         example=[
@@ -138,7 +156,7 @@ class BukkenSearchRequest(BaseModel):
                 ]
             }
         ],
-        description="検索フィルターグループ"
+        description="検索フィルターグループ（手動指定時はこちらを使用）"
     )
     sorts: Optional[List[Dict[str, Any]]] = Field(
         default=[
@@ -956,6 +974,38 @@ async def search_hubspot_bukken(search_criteria: BukkenSearchRequest):
             )
         
         search_data = search_criteria.dict()
+        
+        # 新しいパラメーターからfilterGroupsを構築
+        filters = []
+        
+        # 物件名の部分一致検索
+        if search_data.get('bukken_name') and search_data.get('bukken_name').strip():
+            filters.append({
+                "propertyName": "bukken_name",
+                "operator": "CONTAINS_TOKEN",
+                "value": search_data.get('bukken_name').strip()
+            })
+        
+        # 都道府県の完全一致検索
+        if search_data.get('bukken_state') and search_data.get('bukken_state').strip():
+            filters.append({
+                "propertyName": "bukken_state",
+                "operator": "EQ",
+                "value": search_data.get('bukken_state').strip()
+            })
+        
+        # 市区町村の完全一致検索
+        if search_data.get('bukken_city') and search_data.get('bukken_city').strip():
+            filters.append({
+                "propertyName": "bukken_city",
+                "operator": "EQ",
+                "value": search_data.get('bukken_city').strip()
+            })
+        
+        # 新しいパラメーターでフィルターが構築された場合、filterGroupsを上書き
+        if filters:
+            search_data['filterGroups'] = [{"filters": filters}]
+        
         logger.info(f"Search request received: {search_data}")
         logger.info(f"Search criteria details - filterGroups: {search_data.get('filterGroups', [])}")
         logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
