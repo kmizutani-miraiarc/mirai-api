@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 from typing import Dict, Any, List, Optional
@@ -31,7 +32,22 @@ class HubSpotDealsClient(HubSpotBaseClient):
     async def get_deal_by_id(self, deal_id: str) -> Optional[Dict[str, Any]]:
         """IDで取引を取得"""
         try:
-            result = await self._make_request("GET", f"/crm/v3/objects/deals/{deal_id}")
+            # 必要なプロパティを指定して取得
+            properties = [
+                "dealname",
+                "dealstage", 
+                "amount",
+                "hubspot_owner_id",
+                "createdate",
+                "pipeline",
+                "closedate",
+                "hs_lastmodifieddate"
+            ]
+            result = await self._make_request(
+                "GET", 
+                f"/crm/v3/objects/deals/{deal_id}",
+                params={"properties": ",".join(properties)}
+            )
             return result
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -283,14 +299,29 @@ class HubSpotDealsClient(HubSpotBaseClient):
             logger.info(f"Found {len(deal_ids)} deal associations for bukken {bukken_id}")
             
             # 各取引の詳細情報を取得（関連情報も含む）
+            # 大量の取引がある場合の処理時間短縮のため、並列処理を制限
             deals = []
-            for deal_id in deal_ids:
+            batch_size = 10  # 一度に処理する取引数を制限
+            
+            for i in range(0, len(deal_ids), batch_size):
+                batch_deal_ids = deal_ids[i:i + batch_size]
+                
+                # バッチ内で並列処理
+                batch_tasks = []
+                for deal_id in batch_deal_ids:
+                    batch_tasks.append(self.get_deal_by_id_with_associations(deal_id))
+                
                 try:
-                    deal = await self.get_deal_by_id_with_associations(deal_id)
-                    if deal:
-                        deals.append(deal)
+                    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                    
+                    for result in batch_results:
+                        if isinstance(result, Exception):
+                            logger.warning(f"Failed to get deal in batch: {str(result)}")
+                        elif result:
+                            deals.append(result)
+                            
                 except Exception as e:
-                    logger.warning(f"Failed to get deal {deal_id}: {str(e)}")
+                    logger.warning(f"Failed to process batch: {str(e)}")
                     continue
             
             logger.info(f"Retrieved {len(deals)} deal details for bukken {bukken_id}")
