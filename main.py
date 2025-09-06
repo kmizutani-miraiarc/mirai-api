@@ -414,8 +414,8 @@ async def api_info():
             {"path": "/hubspot/deals/{deal_id}", "method": "PATCH", "description": "HubSpot取引情報更新"},
             {"path": "/hubspot/deals/{deal_id}", "method": "DELETE", "description": "HubSpot取引削除"},
             {"path": "/hubspot/deals/search", "method": "POST", "description": "HubSpot取引検索（パイプライン、取引名、ステージ、取引担当者で検索）"},
-            {"path": "/hubspot/pipelines", "method": "GET", "description": "HubSpotパイプライン一覧取得"},
-            {"path": "/hubspot/pipelines/{pipeline_id}/stages", "method": "GET", "description": "HubSpotパイプラインに紐づくステージ一覧取得"},
+            {"path": "/hubspot/deals/pipelines", "method": "GET", "description": "HubSpotパイプライン一覧取得"},
+            {"path": "/hubspot/deals/pipelines/{pipeline_id}/stages", "method": "GET", "description": "HubSpotパイプラインに紐づくステージ一覧取得"},
             {"path": "/hubspot/bukken/{bukken_id}/deals", "method": "GET", "description": "HubSpot物件に関連づけられた取引取得"},
             {"path": "/hubspot/bukken", "method": "GET", "description": "HubSpot物件情報一覧取得"},
             {"path": "/hubspot/bukken", "method": "POST", "description": "HubSpot物件情報作成"},
@@ -835,6 +835,62 @@ async def get_hubspot_deals(limit: int = 100, after: Optional[str] = None, api_k
     except Exception as e:
         logger.error(f"Failed to get HubSpot deals: {str(e)}")
         raise HTTPException(status_code=500, detail=f"取引一覧の取得に失敗しました: {str(e)}")
+
+@app.get("/hubspot/deals/pipelines", response_model=HubSpotResponse)
+async def get_hubspot_pipelines(api_key: str = Depends(verify_api_key)):
+    """パイプライン一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        pipelines = await hubspot_deals_client.get_pipelines()
+        logger.info(f"Retrieved {len(pipelines)} pipelines")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"パイプライン一覧を正常に取得しました（{len(pipelines)}件のパイプライン）",
+            data={"pipelines": pipelines},
+            count=len(pipelines)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get pipelines: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"パイプライン一覧の取得に失敗しました: {str(e)}"
+        )
+
+@app.get("/hubspot/deals/pipelines/{pipeline_id}/stages", response_model=HubSpotResponse)
+async def get_hubspot_pipeline_stages(pipeline_id: str, api_key: str = Depends(verify_api_key)):
+    """パイプラインに紐づくステージ一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        stages = await hubspot_deals_client.get_pipeline_stages(pipeline_id)
+        logger.info(f"Retrieved {len(stages)} stages for pipeline {pipeline_id}")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"パイプライン '{pipeline_id}' のステージ一覧を正常に取得しました（{len(stages)}件のステージ）",
+            data={"stages": stages, "pipeline_id": pipeline_id},
+            count=len(stages)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get pipeline stages for {pipeline_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"パイプライン '{pipeline_id}' のステージ一覧取得に失敗しました: {str(e)}"
+        )
 
 @app.get("/hubspot/deals/{deal_id}", response_model=HubSpotResponse)
 async def get_hubspot_deal(deal_id: str, api_key: str = Depends(verify_api_key)):
@@ -1484,62 +1540,6 @@ async def search_hubspot_deals(search_criteria: DealSearchRequest, api_key: str 
         raise HTTPException(
             status_code=500,
             detail=f"取引検索に失敗しました: {str(e)}"
-        )
-
-@app.get("/hubspot/pipelines", response_model=HubSpotResponse)
-async def get_hubspot_pipelines(api_key: str = Depends(verify_api_key)):
-    """パイプライン一覧を取得"""
-    try:
-        if not Config.validate_config():
-            raise HTTPException(
-                status_code=500, 
-                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
-            )
-        
-        pipelines = await hubspot_deals_client.get_pipelines()
-        logger.info(f"Retrieved {len(pipelines)} pipelines")
-        
-        return HubSpotResponse(
-            status="success",
-            message=f"パイプライン一覧を正常に取得しました（{len(pipelines)}件のパイプライン）",
-            data={"pipelines": pipelines},
-            count=len(pipelines)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get pipelines: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"パイプライン一覧の取得に失敗しました: {str(e)}"
-        )
-
-@app.get("/hubspot/pipelines/{pipeline_id}/stages", response_model=HubSpotResponse)
-async def get_hubspot_pipeline_stages(pipeline_id: str, api_key: str = Depends(verify_api_key)):
-    """パイプラインに紐づくステージ一覧を取得"""
-    try:
-        if not Config.validate_config():
-            raise HTTPException(
-                status_code=500, 
-                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
-            )
-        
-        stages = await hubspot_deals_client.get_pipeline_stages(pipeline_id)
-        logger.info(f"Retrieved {len(stages)} stages for pipeline {pipeline_id}")
-        
-        return HubSpotResponse(
-            status="success",
-            message=f"パイプライン '{pipeline_id}' のステージ一覧を正常に取得しました（{len(stages)}件のステージ）",
-            data={"stages": stages, "pipeline_id": pipeline_id},
-            count=len(stages)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get pipeline stages for {pipeline_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"パイプライン '{pipeline_id}' のステージ一覧取得に失敗しました: {str(e)}"
         )
 
 @app.get("/hubspot/bukken/{bukken_id}/deals", response_model=HubSpotResponse)
