@@ -44,6 +44,80 @@ class HubSpotDealsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to get deal {deal_id}: {str(e)}")
             return None
+
+    async def get_deal_by_id_with_associations(self, deal_id: str) -> Optional[Dict[str, Any]]:
+        """IDで取引を取得（関連会社・コンタクト情報も含む）"""
+        try:
+            # 取引の基本情報を取得
+            deal = await self.get_deal_by_id(deal_id)
+            if not deal:
+                return None
+            
+            # 関連情報を取得
+            associations = await self.get_deal_associations(deal_id)
+            
+            # 取引情報に関連情報を追加
+            deal["associations"] = associations
+            
+            return deal
+        except Exception as e:
+            logger.error(f"Failed to get deal with associations {deal_id}: {str(e)}")
+            return None
+
+    async def get_deal_associations(self, deal_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        """取引に関連づけられた会社とコンタクトを取得"""
+        associations = {
+            "companies": [],
+            "contacts": []
+        }
+        
+        try:
+            # 会社の関連を取得
+            try:
+                company_result = await self._make_request(
+                    "GET", 
+                    f"/crm/v4/objects/deals/{deal_id}/associations/companies",
+                    params={"limit": 100}
+                )
+                company_ids = [assoc.get("toObjectId") for assoc in company_result.get("results", [])]
+                
+                # 各会社の詳細情報を取得
+                for company_id in company_ids:
+                    try:
+                        company = await self._make_request("GET", f"/crm/v3/objects/companies/{company_id}")
+                        associations["companies"].append(company)
+                    except Exception as e:
+                        logger.warning(f"Failed to get company {company_id}: {str(e)}")
+                        continue
+                        
+            except Exception as e:
+                logger.warning(f"Failed to get company associations for deal {deal_id}: {str(e)}")
+            
+            # コンタクトの関連を取得
+            try:
+                contact_result = await self._make_request(
+                    "GET", 
+                    f"/crm/v4/objects/deals/{deal_id}/associations/contacts",
+                    params={"limit": 100}
+                )
+                contact_ids = [assoc.get("toObjectId") for assoc in contact_result.get("results", [])]
+                
+                # 各コンタクトの詳細情報を取得
+                for contact_id in contact_ids:
+                    try:
+                        contact = await self._make_request("GET", f"/crm/v3/objects/contacts/{contact_id}")
+                        associations["contacts"].append(contact)
+                    except Exception as e:
+                        logger.warning(f"Failed to get contact {contact_id}: {str(e)}")
+                        continue
+                        
+            except Exception as e:
+                logger.warning(f"Failed to get contact associations for deal {deal_id}: {str(e)}")
+                
+        except Exception as e:
+            logger.error(f"Failed to get associations for deal {deal_id}: {str(e)}")
+        
+        return associations
     
     async def create_deal(self, deal_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """取引を作成"""
@@ -124,6 +198,33 @@ class HubSpotDealsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to search deals: {str(e)}")
             return []
+
+    async def search_deals_with_associations(self, search_criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """取引を検索（関連会社・コンタクト情報も含む）"""
+        try:
+            # 基本的な検索を実行
+            deals = await self.search_deals(search_criteria)
+            
+            # 各取引に関連情報を追加
+            deals_with_associations = []
+            for deal in deals:
+                try:
+                    deal_id = deal.get("id")
+                    if deal_id:
+                        # 関連情報を取得
+                        associations = await self.get_deal_associations(deal_id)
+                        deal["associations"] = associations
+                        deals_with_associations.append(deal)
+                except Exception as e:
+                    logger.warning(f"Failed to get associations for deal {deal.get('id')}: {str(e)}")
+                    # 関連情報の取得に失敗しても取引情報は含める
+                    deal["associations"] = {"companies": [], "contacts": []}
+                    deals_with_associations.append(deal)
+            
+            return deals_with_associations
+        except Exception as e:
+            logger.error(f"Failed to search deals with associations: {str(e)}")
+            return []
     
     async def get_pipelines(self) -> List[Dict[str, Any]]:
         """パイプライン一覧を取得"""
@@ -181,11 +282,11 @@ class HubSpotDealsClient(HubSpotBaseClient):
             
             logger.info(f"Found {len(deal_ids)} deal associations for bukken {bukken_id}")
             
-            # 各取引の詳細情報を取得
+            # 各取引の詳細情報を取得（関連情報も含む）
             deals = []
             for deal_id in deal_ids:
                 try:
-                    deal = await self.get_deal_by_id(deal_id)
+                    deal = await self.get_deal_by_id_with_associations(deal_id)
                     if deal:
                         deals.append(deal)
                 except Exception as e:
