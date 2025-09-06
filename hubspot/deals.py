@@ -64,30 +64,44 @@ class HubSpotDealsClient(HubSpotBaseClient):
     async def get_deal_by_id_with_associations(self, deal_id: str) -> Optional[Dict[str, Any]]:
         """IDで取引を取得（関連会社・コンタクト情報も含む）"""
         try:
+            logger.debug(f"Getting deal with associations for deal {deal_id}")
+            
             # 取引の基本情報を取得
             deal = await self.get_deal_by_id(deal_id)
             if not deal:
+                logger.warning(f"Deal {deal_id} not found")
                 return None
             
+            logger.debug(f"Deal {deal_id} basic info retrieved: {deal.get('properties', {}).get('dealname', 'Unknown')}")
+            
             # 関連情報を取得
-            associations = await self.get_deal_associations(deal_id)
+            try:
+                associations = await self.get_deal_associations(deal_id)
+                logger.debug(f"Associations retrieved for deal {deal_id}: {len(associations.get('companies', []))} companies, {len(associations.get('contacts', []))} contacts")
+            except Exception as assoc_e:
+                logger.warning(f"Failed to get associations for deal {deal_id}: {str(assoc_e)}")
+                # 関連情報の取得に失敗しても取引情報は返す
+                associations = {"companies": [], "contacts": []}
             
             # 取引情報に関連情報を追加
             deal["associations"] = associations
             
+            logger.debug(f"Successfully retrieved deal {deal_id} with associations")
             return deal
         except Exception as e:
             logger.error(f"Failed to get deal with associations {deal_id}: {str(e)}")
             return None
 
     async def get_deal_associations(self, deal_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """取引に関連づけられた会社とコンタクトを取得"""
+        """取引に関連づけられた会社とコンタクトを取得（レート制限対策付き）"""
         associations = {
             "companies": [],
             "contacts": []
         }
         
         try:
+            logger.info(f"Getting associations for deal {deal_id}")
+            
             # 会社の関連を取得
             try:
                 company_result = await self._make_request(
@@ -96,12 +110,29 @@ class HubSpotDealsClient(HubSpotBaseClient):
                     params={"limit": 100}
                 )
                 company_ids = [assoc.get("toObjectId") for assoc in company_result.get("results", [])]
+                logger.info(f"Found {len(company_ids)} company associations for deal {deal_id}")
                 
-                # 各会社の詳細情報を取得
-                for company_id in company_ids:
+                # 各会社の詳細情報を取得（レート制限対策付き）
+                for i, company_id in enumerate(company_ids):
                     try:
+                        # レート制限対策: 複数リクエストの間に少し待機
+                        if i > 0 and i % 5 == 0:
+                            await asyncio.sleep(0.1)  # 100ms待機
+                            
                         company = await self._make_request("GET", f"/crm/v3/objects/companies/{company_id}")
                         associations["companies"].append(company)
+                        logger.debug(f"Successfully retrieved company {company_id}")
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 429:  # レート制限
+                            logger.warning(f"Rate limit hit for company {company_id}, waiting...")
+                            await asyncio.sleep(1.0)  # 1秒待機してリトライ
+                            try:
+                                company = await self._make_request("GET", f"/crm/v3/objects/companies/{company_id}")
+                                associations["companies"].append(company)
+                            except Exception as retry_e:
+                                logger.warning(f"Failed to get company {company_id} after retry: {str(retry_e)}")
+                        else:
+                            logger.warning(f"Failed to get company {company_id}: {e.response.status_code} - {e.response.text}")
                     except Exception as e:
                         logger.warning(f"Failed to get company {company_id}: {str(e)}")
                         continue
@@ -117,12 +148,29 @@ class HubSpotDealsClient(HubSpotBaseClient):
                     params={"limit": 100}
                 )
                 contact_ids = [assoc.get("toObjectId") for assoc in contact_result.get("results", [])]
+                logger.info(f"Found {len(contact_ids)} contact associations for deal {deal_id}")
                 
-                # 各コンタクトの詳細情報を取得
-                for contact_id in contact_ids:
+                # 各コンタクトの詳細情報を取得（レート制限対策付き）
+                for i, contact_id in enumerate(contact_ids):
                     try:
+                        # レート制限対策: 複数リクエストの間に少し待機
+                        if i > 0 and i % 5 == 0:
+                            await asyncio.sleep(0.1)  # 100ms待機
+                            
                         contact = await self._make_request("GET", f"/crm/v3/objects/contacts/{contact_id}")
                         associations["contacts"].append(contact)
+                        logger.debug(f"Successfully retrieved contact {contact_id}")
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 429:  # レート制限
+                            logger.warning(f"Rate limit hit for contact {contact_id}, waiting...")
+                            await asyncio.sleep(1.0)  # 1秒待機してリトライ
+                            try:
+                                contact = await self._make_request("GET", f"/crm/v3/objects/contacts/{contact_id}")
+                                associations["contacts"].append(contact)
+                            except Exception as retry_e:
+                                logger.warning(f"Failed to get contact {contact_id} after retry: {str(retry_e)}")
+                        else:
+                            logger.warning(f"Failed to get contact {contact_id}: {e.response.status_code} - {e.response.text}")
                     except Exception as e:
                         logger.warning(f"Failed to get contact {contact_id}: {str(e)}")
                         continue
@@ -133,6 +181,7 @@ class HubSpotDealsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to get associations for deal {deal_id}: {str(e)}")
         
+        logger.info(f"Associations summary for deal {deal_id}: {len(associations['companies'])} companies, {len(associations['contacts'])} contacts")
         return associations
     
     async def create_deal(self, deal_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -299,12 +348,13 @@ class HubSpotDealsClient(HubSpotBaseClient):
             logger.info(f"Found {len(deal_ids)} deal associations for bukken {bukken_id}")
             
             # 各取引の詳細情報を取得（関連情報も含む）
-            # 大量の取引がある場合の処理時間短縮のため、並列処理を制限
+            # レート制限対策のため、バッチサイズを小さくして並列処理を制限
             deals = []
-            batch_size = 10  # 一度に処理する取引数を制限
+            batch_size = 5  # 一度に処理する取引数を制限（10→5に変更）
             
             for i in range(0, len(deal_ids), batch_size):
                 batch_deal_ids = deal_ids[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}: deals {i+1}-{min(i+batch_size, len(deal_ids))}")
                 
                 # バッチ内で並列処理
                 batch_tasks = []
@@ -314,11 +364,19 @@ class HubSpotDealsClient(HubSpotBaseClient):
                 try:
                     batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
                     
+                    successful_count = 0
                     for result in batch_results:
                         if isinstance(result, Exception):
                             logger.warning(f"Failed to get deal in batch: {str(result)}")
                         elif result:
                             deals.append(result)
+                            successful_count += 1
+                    
+                    logger.info(f"Batch {i//batch_size + 1} completed: {successful_count}/{len(batch_deal_ids)} deals retrieved")
+                    
+                    # バッチ間で少し待機（レート制限対策）
+                    if i + batch_size < len(deal_ids):
+                        await asyncio.sleep(0.5)  # 500ms待機
                             
                 except Exception as e:
                     logger.warning(f"Failed to process batch: {str(e)}")

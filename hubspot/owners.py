@@ -1,5 +1,6 @@
 import httpx
 import logging
+import asyncio
 from typing import Dict, Any, List, Optional
 from .client import HubSpotBaseClient
 
@@ -25,13 +26,35 @@ class HubSpotOwnersClient(HubSpotBaseClient):
             return []
     
     async def get_owner_by_id(self, owner_id: str) -> Optional[Dict[str, Any]]:
-        """IDで担当者を取得"""
-        try:
-            data = await self._make_request("GET", f"/crm/v3/owners/{owner_id}")
-            return data
-        except Exception as e:
-            logger.error(f"Failed to get owner by ID {owner_id}: {str(e)}")
-            return None
+        """IDで担当者を取得（レート制限対策付き）"""
+        max_retries = 3
+        retry_delay = 1.0  # 1秒から開始
+        
+        for attempt in range(max_retries):
+            try:
+                data = await self._make_request("GET", f"/crm/v3/owners/{owner_id}")
+                return data
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:  # レート制限
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Rate limit hit for owner {owner_id}, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # 指数バックオフ
+                        continue
+                    else:
+                        logger.error(f"Rate limit exceeded for owner {owner_id} after {max_retries} attempts")
+                        return None
+                elif e.response.status_code == 404:
+                    logger.warning(f"Owner {owner_id} not found")
+                    return None
+                else:
+                    logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to get owner by ID {owner_id}: {str(e)}")
+                return None
+        
+        return None
     
     async def create_owner(self, owner_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """新しい担当者を作成"""

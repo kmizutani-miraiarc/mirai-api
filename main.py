@@ -484,7 +484,8 @@ async def get_hubspot_owner(owner_id: str, api_key: str = Depends(verify_api_key
         return HubSpotResponse(
             status="success",
             message="担当者詳細を正常に取得しました",
-            data={"owner": owner}
+            data={"owner": owner},
+            count=1
         )
     except HTTPException:
         raise
@@ -534,7 +535,8 @@ async def update_hubspot_owner(owner_id: str, owner_data: OwnerUpdateRequest, ap
         return HubSpotResponse(
             status="success",
             message="担当者情報を正常に更新しました",
-            data={"owner": owner}
+            data={"owner": owner},
+            count=1
         )
     except HTTPException:
         raise
@@ -559,7 +561,8 @@ async def delete_hubspot_owner(owner_id: str, api_key: str = Depends(verify_api_
         return HubSpotResponse(
             status="success",
             message="担当者を正常に削除しました",
-            data={"owner_id": owner_id}
+            data={"owner_id": owner_id},
+            count=1
         )
     except HTTPException:
         raise
