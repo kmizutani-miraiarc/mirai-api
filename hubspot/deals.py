@@ -246,12 +246,21 @@ class HubSpotDealsClient(HubSpotBaseClient):
             if search_criteria.get("after") == "":
                 search_criteria["after"] = None
             
+            # afterパラメータを文字列として確実に処理
+            if search_criteria.get("after") is not None:
+                search_criteria["after"] = str(search_criteria["after"])
+            
             logger.info(f"Searching deals with criteria: {search_criteria}")
             result = await self._make_request("POST", "/crm/v3/objects/deals/search", json=search_criteria)
             logger.info(f"Search result: {result}")
             results = result.get("results", [])
+            paging = result.get("paging", {})
             logger.info(f"Found {len(results)} results")
-            return results
+            # paging情報も含めて返す
+            return {
+                "results": results,
+                "paging": paging
+            }
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 logger.error("HubSpot API認証エラー: 有効なAPIキーを設定してください")

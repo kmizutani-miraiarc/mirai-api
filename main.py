@@ -344,7 +344,16 @@ class DealSearchRequest(BaseModel):
         example="",
         description="ページネーション用のカーソル（空文字列またはnullで最初から検索）"
     )
-
+    fromDate: Optional[str] = Field(
+        default=None,
+        example="2024-01-01",
+        description="作成日の開始日（YYYY-MM-DD形式）"
+    )
+    toDate: Optional[str] = Field(
+        default=None,
+        example="2024-12-31",
+        description="作成日の終了日（YYYY-MM-DD形式）"
+    )
 # HubSpotクライアントのインスタンス
 hubspot_owners_client = HubSpotOwnersClient()
 hubspot_contacts_client = HubSpotContactsClient()
@@ -1247,7 +1256,7 @@ async def search_hubspot_bukken(search_criteria: BukkenSearchRequest, api_key: s
         return HubSpotResponse(
             status="success",
             message=f"物件情報検索を正常に実行しました（{len(results)}件の物件を取得）",
-            data={"results": results},
+            data={"results": results, "paging": paging},
             count=len(results)
         )
     except HTTPException:
@@ -1514,6 +1523,21 @@ async def search_hubspot_deals(search_criteria: DealSearchRequest, api_key: str 
                 "operator": "EQ",
                 "value": search_data.get('hubspot_owner_id').strip()
             })
+
+        # 作成日の範囲検索
+        if search_data.get('fromDate') and search_data.get('fromDate').strip():
+            filters.append({
+                "propertyName": "createdate",
+                "operator": "GTE",
+                "value": search_data.get('fromDate').strip()
+            })
+
+        if search_data.get('toDate') and search_data.get('toDate').strip():
+            filters.append({
+                "propertyName": "createdate",
+                "operator": "LTE",
+                "value": search_data.get('toDate').strip()
+            })
         
         # 新しいパラメーターでフィルターが構築された場合、filterGroupsを上書き
         if filters:
@@ -1524,13 +1548,15 @@ async def search_hubspot_deals(search_criteria: DealSearchRequest, api_key: str 
         logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
         logger.info(f"Search criteria details - limit: {search_data.get('limit', 100)}")
         
-        results = await hubspot_deals_client.search_deals_with_associations(search_data)
+        search_result = await hubspot_deals_client.search_deals(search_data)
+        results = search_result.get("results", [])
+        paging = search_result.get("paging", {})
         logger.info(f"Deal search completed. Found {len(results)} results")
         
         return HubSpotResponse(
             status="success",
             message=f"取引検索を正常に実行しました（{len(results)}件の取引を取得）",
-            data={"results": results},
+            data={"results": results, "paging": paging},
             count=len(results)
         )
     except HTTPException:
