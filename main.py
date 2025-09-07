@@ -1250,7 +1250,9 @@ async def search_hubspot_bukken(search_criteria: BukkenSearchRequest, api_key: s
         logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
         logger.info(f"Search criteria details - limit: {search_data.get('limit', 100)}")
         
-        results = await hubspot_bukken_client.search_bukken(search_data)
+        search_result = await hubspot_bukken_client.search_bukken(search_data)
+        results = search_result.get("results", [])
+        paging = search_result.get("paging", {})
         logger.info(f"Search completed. Found {len(results)} results")
         
         return HubSpotResponse(

@@ -118,7 +118,7 @@ class HubSpotBukkenClient(HubSpotBaseClient):
             logger.error(f"Failed to delete bukken {bukken_id}: {str(e)}")
             return False
     
-    async def search_bukken(self, search_criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def search_bukken(self, search_criteria: Dict[str, Any]) -> Dict[str, Any]:
         """物件情報を検索"""
         try:
             # 空文字列のqueryパラメータをNoneに変換
@@ -133,8 +133,13 @@ class HubSpotBukkenClient(HubSpotBaseClient):
             result = await self._make_request("POST", f"/crm/v3/objects/{self.object_type_id}/search", json=search_criteria)
             logger.info(f"Search result: {result}")
             results = result.get("results", [])
+            paging = result.get("paging", {})
             logger.info(f"Found {len(results)} results")
-            return results
+            # paging情報も含めて返す
+            return {
+                "results": results,
+                "paging": paging
+            }
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 logger.error("HubSpot API認証エラー: 有効なAPIキーを設定してください")
@@ -142,10 +147,10 @@ class HubSpotBukkenClient(HubSpotBaseClient):
                 logger.error(f"Invalid search criteria: {e.response.text}")
             else:
                 logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
-            return []
+            return {"results": [], "paging": {}}
         except Exception as e:
             logger.error(f"Failed to search bukken: {str(e)}")
-            return []
+            return {"results": [], "paging": {}}
     
     async def get_bukken_schema(self) -> Optional[Dict[str, Any]]:
         """物件情報カスタムオブジェクトのスキーマを取得"""
