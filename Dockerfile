@@ -10,7 +10,9 @@ WORKDIR /app
 
 # システムパッケージを更新し、Python3とpipをインストール
 RUN dnf update -y && \
-    dnf install -y python3 python3-pip python3-devel gcc curl --allowerasing && \
+    dnf install -y python3 python3-pip python3-devel gcc curl \
+    tesseract tesseract-langpack-jpn \
+    poppler-utils mesa-libGL glib2 --allowerasing && \
     dnf clean all
 
 # Pythonのシンボリックリンクを作成（pythonコマンドでpython3を実行）

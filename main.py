@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import uvicorn
 import logging
+import tempfile
+import os
 from hubspot.owners import HubSpotOwnersClient
 from hubspot.contacts import HubSpotContactsClient
 from hubspot.companies import HubSpotCompaniesClient
@@ -12,6 +14,7 @@ from hubspot.bukken import HubSpotBukkenClient
 from hubspot.config import Config
 from database.connection import db_connection
 from database.api_keys import api_key_manager
+from processors import DocumentProcessor, AIProcessor
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -1597,6 +1600,122 @@ async def get_hubspot_bukken_deals(bukken_id: str, api_key: str = Depends(verify
             status_code=500,
             detail=f"物件 '{bukken_id}' の取引取得に失敗しました: {str(e)}"
         )
+
+
+
+# 物件情報分析API
+class PropertyAnalysisResponse(BaseModel):
+    status: str = Field(..., example='success')
+    message: str = Field(..., example='物件情報の解析が完了しました')
+    data: Dict[str, Any] = Field(..., description='解析された物件情報')
+
+@app.post('/property/analyze', response_model=PropertyAnalysisResponse)
+async def analyze_property_document(
+    file: UploadFile = File(...),
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    物件情報のPDFや画像を解析してJSONで返す
+    
+    Args:
+        file: アップロードされたファイル（PDFまたは画像）
+        api_key: API認証キー
+        
+    Returns:
+        解析された物件情報のJSON
+    """
+    logger.info(f'Property analysis request received for file: {file.filename}')
+    
+    # ファイルタイプの検証
+    if not file.filename:
+        raise HTTPException(status_code=400, detail='ファイル名が指定されていません')
+    
+    file_extension = file.filename.lower().split('.')[-1]
+    supported_types = ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff']
+    
+    if file_extension not in supported_types:
+        raise HTTPException(
+            status_code=400, 
+            detail="サポートされていないファイル形式です。対応形式: " + ", ".join(supported_types)
+        )
+    
+    # ファイルサイズの検証（10MB制限）
+    file_content = await file.read()
+    if len(file_content) > 10 * 1024 * 1024:  # 10MB
+        raise HTTPException(status_code=400, detail='ファイルサイズが大きすぎます（最大10MB）')
+    
+    # 一時ファイルの作成
+    temp_file_path = None
+    try:
+        # 一時ファイルを作成
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
+        
+        logger.info(f'Temporary file created: {temp_file_path}')
+        
+        # 文書処理
+        document_processor = DocumentProcessor()
+        try:
+            # ファイルタイプの判定
+            if file_extension == 'pdf':
+                file_type = 'pdf'
+            else:
+                file_type = 'image'
+            
+            # テキスト抽出
+            logger.info('Starting text extraction')
+            extracted_text = document_processor.process_file(temp_file_path, file_type)
+            
+            if not extracted_text or not extracted_text.strip():
+                raise HTTPException(status_code=400, detail='ファイルからテキストを抽出できませんでした')
+            
+            logger.info(f'Text extraction completed. Length: {len(extracted_text)} characters')
+            
+        finally:
+            document_processor.cleanup()
+        
+        # AI処理
+        ai_processor = AIProcessor()
+        try:
+            # テキスト解析
+            logger.info('Starting AI analysis')
+            analysis_result = ai_processor.analyze_text(extracted_text)
+            
+            # 結果の検証
+            if not ai_processor.validate_analysis_result(analysis_result):
+                logger.warning('Analysis result validation failed, but continuing')
+            
+            logger.info('AI analysis completed successfully')
+            
+        except Exception as ai_error:
+            logger.error(f'AI analysis failed: {str(ai_error)}')
+            raise HTTPException(status_code=500, detail=f'AI解析に失敗しました: {str(ai_error)}')
+        
+        # レスポンスの作成
+        response = PropertyAnalysisResponse(
+            status='success',
+            message='物件情報の解析が完了しました',
+            data=analysis_result
+        )
+        
+        logger.info('Property analysis completed successfully')
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Property analysis failed: {str(e)}')
+        raise HTTPException(status_code=500, detail=f'解析処理中にエラーが発生しました: {str(e)}')
+    
+    finally:
+        # 一時ファイルの削除
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+                logger.info(f'Temporary file deleted: {temp_file_path}')
+            except Exception as cleanup_error:
+                logger.error(f'Failed to delete temporary file: {str(cleanup_error)}')
 
 if __name__ == "__main__":
     # 開発用サーバーの起動
