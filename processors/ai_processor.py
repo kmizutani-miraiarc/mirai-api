@@ -131,63 +131,84 @@ class AIProcessor:
             生成されたプロンプト
         """
         prompt = f"""
-以下の物件概要書のテキストを解析して、JSON形式で物件情報を抽出してください。
+あなたは不動産物件情報の専門解析AIです。以下の物件概要書のテキストを詳細に解析して、JSON形式で物件情報を抽出してください。
 
-テキスト:
+## 解析対象テキスト:
 {text}
 
-以下の形式でJSONを返してください（該当しない項目はnullまたは空文字列）:
+## 抽出ルール:
+1. テキストから該当する情報を正確に抽出してください
+2. 数値は単位を除いた数値のみを返してください
+3. 該当しない項目はnullを返してください
+4. 住所は都道府県、市区町村、住所に分けて抽出してください
+5. 物件種別は以下の候補から最も適切なものを選択してください：
+   - マンション
+   - AP（アパート）
+   - レジ（レジデンス）
+   - 戸建
+   - 区分MS（区分マンション）
+   - ビル
+   - 店舗
+   - 店舗・共同住宅
+   - その他
+
+## 出力形式:
+以下のJSON形式で返してください：
+
 {{
-  "name": "物件名",
-  "state": "都道府県",
-  "city": "市区町村",
-  "address": "住所",
+  "name": "物件名（建物名や物件の正式名称）",
+  "state": "都道府県（例：東京都、大阪府）",
+  "city": "市区町村（例：渋谷区、中央区）",
+  "address": "住所（番地以降の詳細住所）",
   "lotNumber": "地番",
-  "type": "物件種別",
-  "structure": "構造",
-  "floor": "階数",
-  "units": "戸数",
-  "completionYear": "竣工年月",
-  "age": "築年",
-  "totalFloorArea": "延床面積",
-  "landArea": "土地面積（㎡単位、数値のみ）",
-  "tsubo": "坪数",
-  "roadPrice": "路線価",
-  "landAppraisal": "土地評価額",
-  "frontage": "間口",
-  "buildingCoverageRatio": "建坪率",
-  "floorAreaRatio": "容積率",
-  "cityPlan": "都市計画",
-  "useDistrict": "用途地域",
-  "firePreventionArea": "防火地域",
-  "zoning2": "用途地域2",
-  "buildingCoverageRatio2": "建坪率2",
-  "floorAreaRatio2": "容積率2",
-  "heightDistrict": "高度地区",
-  "fireDistrict": "防火地域",
-  "water": "上水道",
-  "sewerage": "下水道",
-  "gas": "ガス",
-  "electricity": "電気",
-  "parking": "駐車場",
-  "yield": "利回り",
-  "landPrice": "土地価格",
-  "buildingPrice": "建物価格",
-  "introductionPrice": "紹介価格",
-  "currentRent": "現在賃料",
-  "currentYield": "現在利回り",
-  "fullOccupancy": "満室率",
-  "fullOccupancyYield": "満室利回り",
-  "otherRestrictions": "その他制限",
-  "remarks": "備考"
+  "type": "物件種別（上記候補から選択）",
+  "structure": "構造（RC造、木造、S造など）",
+  "floor": "階数（数値のみ）",
+  "units": "戸数（数値のみ）",
+  "completionYear": "竣工年月（YYYY年MM月形式）",
+  "age": "築年数（数値のみ）",
+  "totalFloorArea": "延床面積（数値のみ、㎡単位）",
+  "landArea": "土地面積（数値のみ、㎡単位）",
+  "tsubo": "坪数（数値のみ）",
+  "roadPrice": "路線価（数値のみ、円/㎡単位）",
+  "landAppraisal": "土地評価額（数値のみ、円単位）",
+  "frontage": "間口（数値のみ、m単位）",
+  "buildingCoverageRatio": "建坪率（数値のみ、%単位）",
+  "floorAreaRatio": "容積率（数値のみ、%単位）",
+  "cityPlan": "都市計画（市街化区域、市街化調整区域など）",
+  "useDistrict": "用途地域（第一種住居地域など）",
+  "firePreventionArea": "防火地域（防火地域、準防火地域など）",
+  "zoning2": "用途地域2（複数ある場合）",
+  "buildingCoverageRatio2": "建坪率2（複数ある場合）",
+  "floorAreaRatio2": "容積率2（複数ある場合）",
+  "heightDistrict": "高度地区（高度地区、高度利用地区など）",
+  "fireDistrict": "防火地域（防火地域、準防火地域など）",
+  "water": "上水道（有、無、計画中など）",
+  "sewerage": "下水道（有、無、計画中など）",
+  "gas": "ガス（都市ガス、プロパンガス、無など）",
+  "electricity": "電気（有、無など）",
+  "parking": "駐車場（台数や有無）",
+  "yield": "利回り（数値のみ、%単位）",
+  "landPrice": "土地価格（数値のみ、円単位）",
+  "buildingPrice": "建物価格（数値のみ、円単位）",
+  "introductionPrice": "紹介価格（数値のみ、円単位）",
+  "currentRent": "現在賃料（数値のみ、円単位）",
+  "currentYield": "現在利回り（数値のみ、%単位）",
+  "fullOccupancy": "満室率（数値のみ、%単位）",
+  "fullOccupancyYield": "満室利回り（数値のみ、%単位）",
+  "otherRestrictions": "その他制限（建築制限、用途制限など）",
+  "remarks": "備考（その他の重要な情報）"
 }}
 
-特に注意点：
-- 土地面積（landArea）は㎡単位の数値のみを抽出してください
-- 物件種別は「マンション」「AP」「レジ」「戸建」「区分MS」「ビル」「店舗」「店舗・共同住宅」「その他」などから適切なものを選択してください
-- 数値項目は単位を除いた数値のみを返してください
+## 重要な注意事項:
+- 数値は必ず単位を除いて数値のみを返してください
+- 土地面積は㎡単位で統一してください
+- 価格は円単位で統一してください
+- パーセンテージは%記号を除いて数値のみを返してください
+- テキストに明記されていない情報は推測せず、nullを返してください
+- 複数の値がある場合は、最も主要なものを選択してください
 
-JSONのみを返してください。説明文は含めないでください。
+JSONのみを返してください。説明文やコメントは含めないでください。
 """
         return prompt
     
@@ -202,26 +223,46 @@ JSONのみを返してください。説明文は含めないでください。
             抽出されたJSON辞書、失敗時はNone
         """
         try:
-            # JSONパターンを検索
-            json_pattern = r'\{[\s\S]*\}'
-            json_match = re.search(json_pattern, response_text)
+            # 複数のJSONパターンを試行
+            json_patterns = [
+                r'\{[\s\S]*\}',  # 基本的なJSONパターン
+                r'```json\s*(\{[\s\S]*?\})\s*```',  # Markdownコードブロック
+                r'```\s*(\{[\s\S]*?\})\s*```',  # コードブロック
+                r'JSON:\s*(\{[\s\S]*?\})',  # JSON: プレフィックス
+                r'Response:\s*(\{[\s\S]*?\})',  # Response: プレフィックス
+            ]
             
-            if json_match:
-                json_str = json_match.group(0)
-                # JSONをパース
-                json_data = json.loads(json_str)
-                
-                # データの検証とクリーニング
+            for pattern in json_patterns:
+                json_match = re.search(pattern, response_text, re.IGNORECASE)
+                if json_match:
+                    json_str = json_match.group(1) if len(json_match.groups()) > 0 else json_match.group(0)
+                    
+                    try:
+                        # JSONをパース
+                        json_data = json.loads(json_str)
+                        
+                        # データの検証とクリーニング
+                        cleaned_data = self._clean_analysis_result(json_data)
+                        
+                        logger.info(f"Successfully extracted JSON using pattern: {pattern}")
+                        return cleaned_data
+                        
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"JSON parsing failed for pattern {pattern}: {str(e)}")
+                        continue
+            
+            # パターンマッチが失敗した場合は、テキスト全体をJSONとして試行
+            logger.warning("No JSON pattern matched, trying to parse entire response as JSON")
+            try:
+                json_data = json.loads(response_text.strip())
                 cleaned_data = self._clean_analysis_result(json_data)
-                
                 return cleaned_data
-            else:
-                logger.warning("No JSON pattern found in response")
-                return None
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {str(e)}")
+            except json.JSONDecodeError:
+                pass
+            
+            logger.warning("No valid JSON found in response")
             return None
+                
         except Exception as e:
             logger.error(f"JSON extraction failed: {str(e)}")
             return None
@@ -251,6 +292,15 @@ JSONのみを返してください。説明文は含めないでください。
             "remarks"
         ]
         
+        # 数値フィールドのリスト
+        numeric_fields = [
+            "floor", "units", "age", "totalFloorArea", "landArea", "tsubo", 
+            "roadPrice", "landAppraisal", "frontage", "buildingCoverageRatio", 
+            "floorAreaRatio", "buildingCoverageRatio2", "floorAreaRatio2", 
+            "yield", "landPrice", "buildingPrice", "introductionPrice", 
+            "currentRent", "currentYield", "fullOccupancy", "fullOccupancyYield"
+        ]
+        
         for field in expected_fields:
             value = data.get(field)
             
@@ -263,11 +313,43 @@ JSONのみを返してください。説明文は含めないでください。
                 if cleaned_value == "":
                     cleaned_data[field] = None
                 else:
-                    cleaned_data[field] = cleaned_value
+                    # 数値フィールドの場合は数値変換を試行
+                    if field in numeric_fields:
+                        cleaned_data[field] = self._clean_numeric_value(cleaned_value)
+                    else:
+                        cleaned_data[field] = cleaned_value
             else:
                 cleaned_data[field] = value
         
         return cleaned_data
+    
+    def _clean_numeric_value(self, value: str) -> Optional[float]:
+        """
+        数値文字列をクリーニングして数値に変換
+        
+        Args:
+            value: 数値文字列
+            
+        Returns:
+            変換された数値、失敗時はNone
+        """
+        try:
+            # 不要な文字を除去
+            cleaned = re.sub(r'[^\d.,\-]', '', value)
+            
+            # カンマを除去
+            cleaned = cleaned.replace(',', '')
+            
+            # 空文字列の場合はNone
+            if not cleaned:
+                return None
+            
+            # 数値に変換
+            return float(cleaned)
+            
+        except (ValueError, TypeError):
+            logger.warning(f"Failed to convert numeric value: {value}")
+            return None
     
     def validate_analysis_result(self, data: Dict[str, Any]) -> bool:
         """

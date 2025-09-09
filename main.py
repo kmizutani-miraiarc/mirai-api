@@ -1717,6 +1717,14 @@ async def analyze_property_document(
             except Exception as cleanup_error:
                 logger.error(f'Failed to delete temporary file: {str(cleanup_error)}')
 
+
+
+# 継続学習システムの初期化
+
+
+
+
+
 if __name__ == "__main__":
     # 開発用サーバーの起動
     uvicorn.run(
