@@ -13,3 +13,5 @@ Pillow==10.1.0
 pytesseract==0.3.10
 # AI processing
 google-generativeai==0.3.2
+# Google Vision API
+google-cloud-vision==3.4.4
