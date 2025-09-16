@@ -16,6 +16,9 @@ import pytesseract
 from pdf2image import convert_from_path
 import PyPDF2
 
+# ロガーの初期化
+logger = logging.getLogger(__name__)
+
 # Google Vision API関連のインポート
 try:
     from google.cloud import vision
@@ -24,8 +27,6 @@ try:
 except ImportError:
     VISION_API_AVAILABLE = False
     logger.warning("Google Vision API not available. Install google-cloud-vision to enable Vision API OCR.")
-
-logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
     """文書処理クラス"""
