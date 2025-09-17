@@ -117,16 +117,16 @@ class DocumentProcessor:
     def _extract_text_from_pdf_with_ocr(self, pdf_path: str) -> str:
         """OCRを使用してPDFからテキストを抽出（高精度設定）"""
         try:
-            # 複数のDPIで試行して最適な結果を選択
-            dpi_options = [300, 400, 600]
+            # 最適化されたDPIで試行（パフォーマンス重視）
+            dpi_options = [400]  # 400DPIのみで高速処理
             best_text = ""
             best_confidence = 0
             
             for dpi in dpi_options:
                 try:
                     logger.info(f"Trying OCR with DPI: {dpi}")
-                    # PDFを画像に変換
-                    images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=5)  # 最初の5ページのみ処理
+                    # PDFを画像に変換（パフォーマンス最適化）
+                    images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=3)  # 最初の3ページのみ処理
                     
                     page_texts = []
                     total_confidence = 0
@@ -295,11 +295,11 @@ class DocumentProcessor:
             if image.mode != 'L':
                 image = image.convert('L')
             
-            # 画像のサイズを調整（DPIを考慮）
+            # 画像のサイズを調整（パフォーマンス最適化）
             width, height = image.size
-            if width < 1000 or height < 1000:
+            if width < 800 or height < 800:  # 閾値を下げて処理を高速化
                 # 小さな画像は拡大
-                scale_factor = max(1000 / width, 1000 / height)
+                scale_factor = max(800 / width, 800 / height)
                 new_width = int(width * scale_factor)
                 new_height = int(height * scale_factor)
                 image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
@@ -321,27 +321,17 @@ class DocumentProcessor:
     def _extract_text_with_multiple_configs(self, image: Image.Image) -> str:
         """複数のOCR設定を試行して最適な結果を選択"""
         try:
-            # OCR設定のリスト（精度重視）
+            # OCR設定のリスト（パフォーマンス重視）
             ocr_configs = [
-                # 高精度設定（日本語+英語）
+                # 高精度設定（日本語+英語）- 最適化
                 {
-                    'config': r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽゃゅょっー・、。！？（）「」【】',
+                    'config': r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽゃゅょっー・、。！？（）「」【】',
                     'lang': 'jpn+eng'
                 },
-                # 自動ページ分割
+                # 自動ページ分割（フォールバック）
                 {
                     'config': r'--oem 3 --psm 3',
                     'lang': 'jpn+eng'
-                },
-                # 単一テキストブロック
-                {
-                    'config': r'--oem 3 --psm 7',
-                    'lang': 'jpn+eng'
-                },
-                # 英語のみ（フォールバック）
-                {
-                    'config': r'--oem 3 --psm 6',
-                    'lang': 'eng'
                 }
             ]
             
@@ -369,6 +359,11 @@ class DocumentProcessor:
                     if avg_confidence > best_confidence and len(text.strip()) > len(best_text.strip()):
                         best_confidence = avg_confidence
                         best_text = text.strip()
+                        
+                        # 早期終了条件: 十分な品質の結果が得られたら処理を終了
+                        if avg_confidence > 80.0 and len(text.strip()) > 200:
+                            logger.info(f"Early termination: confidence={avg_confidence:.2f}% > 80%, text_length={len(text.strip())} > 200")
+                            break
                         
                 except Exception as e:
                     logger.warning(f"OCR config {i+1} failed: {str(e)}")

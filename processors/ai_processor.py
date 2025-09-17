@@ -16,13 +16,10 @@ logger = logging.getLogger(__name__)
 class AIProcessor:
     """AI処理クラス"""
     
-    # Gemini API関連定数
+    # Gemini API関連定数（パフォーマンス最適化）
     AVAILABLE_MODELS = [
-        'gemini-1.5-flash',
-        'gemini-2.0-flash', 
-        'gemini-1.5-pro',
-        'gemini-2.5-flash',
-        'gemini-2.5-pro'
+        'gemini-1.5-flash',  # 最速モデルを優先
+        'gemini-2.0-flash'
     ]
     DEFAULT_MODEL = 'gemini-1.5-flash'
     MAX_TOKENS = 4096
@@ -111,6 +108,8 @@ class AIProcessor:
             json_data = self._extract_json_from_response(response_text)
             
             if json_data:
+                # 数値の正規化処理を適用
+                json_data = self._normalize_numeric_values(json_data)
                 return json_data
             else:
                 logger.warning(f"Model {model_name} response did not contain valid JSON: {response_text[:200]}")
@@ -119,6 +118,50 @@ class AIProcessor:
         except Exception as e:
             logger.error(f"Model {model_name} analysis failed: {str(e)}")
             raise
+    
+    def _normalize_numeric_values(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        数値の正規化処理
+        小数点が正しく認識されるように調整
+        """
+        try:
+            # 数値フィールドのリスト
+            numeric_fields = [
+                'area', 'landArea', 'buildingArea', 'floorArea', 
+                'price', 'rent', 'deposit', 'keyMoney',
+                'floor', 'units', 'age', 'completionYear'
+            ]
+            
+            for field in numeric_fields:
+                if field in data and data[field] is not None:
+                    value = str(data[field])
+                    
+                    # 数値文字列の場合のみ処理
+                    if value.replace('.', '').replace(',', '').replace('-', '').isdigit():
+                        # カンマを除去
+                        value = value.replace(',', '')
+                        
+                        # 小数点の処理
+                        if '.' in value:
+                            # 小数点が含まれている場合はそのまま保持
+                            try:
+                                data[field] = float(value)
+                            except ValueError:
+                                # 変換に失敗した場合は元の値を保持
+                                pass
+                        else:
+                            # 整数の場合は整数として保持
+                            try:
+                                data[field] = int(value)
+                            except ValueError:
+                                # 変換に失敗した場合は元の値を保持
+                                pass
+            
+            return data
+            
+        except Exception as e:
+            logger.warning(f"Number normalization failed: {str(e)}")
+            return data
     
     def _create_prompt(self, text: str) -> str:
         """
@@ -138,7 +181,7 @@ class AIProcessor:
 
 ## 抽出ルール（高精度設定）:
 1. **テキストの文脈を深く理解**して、該当する情報を正確に抽出してください
-2. **数値の正規化**: 単位を除いた数値のみを返し、カンマ区切りは除去してください
+2. **数値の正規化**: 単位を除いた数値のみを返し、カンマ区切りは除去してください。**小数点は必ず保持**してください（例：149.88 → 149.88、14988 → 14988）
 3. **住所の詳細解析**: 都道府県、市区町村、住所に正確に分割してください
 4. **物件種別の判定**: 以下の候補から最も適切なものを選択し、略語も正しく解釈してください：
    - マンション（MS、マンション、分譲マンション）
@@ -159,6 +202,7 @@ class AIProcessor:
 ## 特別な注意事項:
 - テキストが不完全でも、可能な限り情報を抽出してください
 - 数値の単位（㎡、坪、円等）は除去してください
+- **小数点の処理**: 数値に小数点が含まれている場合は必ず保持してください（例：149.88㎡ → 149.88）
 - 住所の表記ゆれ（「1-2-3」と「1丁目2番地3号」等）を正規化してください
 - 物件名の表記ゆれ（「○○マンション」と「○○マンションA棟」等）を考慮してください
    - ビル
