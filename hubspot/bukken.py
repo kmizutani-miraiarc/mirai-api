@@ -118,6 +118,42 @@ class HubSpotBukkenClient(HubSpotBaseClient):
             logger.error(f"Failed to delete bukken {bukken_id}: {str(e)}")
             return False
     
+    async def get_property_options(self, property_name: str) -> Optional[List[Dict[str, Any]]]:
+        """HubSpotプロパティの選択肢を取得"""
+        try:
+            # プロパティの詳細情報を取得
+            result = await self._make_request("GET", f"/crm/v3/properties/{self.object_type_id}/{property_name}")
+            
+            if result and "options" in result:
+                # 選択肢を整形して返す
+                options = []
+                for option in result["options"]:
+                    options.append({
+                        "label": option.get("label", ""),
+                        "value": option.get("value", ""),
+                        "description": option.get("description", ""),
+                        "displayOrder": option.get("displayOrder", 0)
+                    })
+                
+                # displayOrderでソート
+                options.sort(key=lambda x: x["displayOrder"])
+                return options
+            else:
+                logger.warning(f"Property {property_name} has no options or is not a select property")
+                return []
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                logger.error("HubSpot API認証エラー: 有効なAPIキーを設定してください")
+            elif e.response.status_code == 404:
+                logger.error(f"Property {property_name} not found")
+            else:
+                logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get property options for {property_name}: {str(e)}")
+            return None
+    
     async def search_bukken(self, search_criteria: Dict[str, Any]) -> Dict[str, Any]:
         """物件情報を検索"""
         try:

@@ -437,6 +437,7 @@ async def api_info():
             {"path": "/hubspot/bukken/search", "method": "POST", "description": "HubSpot物件情報検索"},
             {"path": "/hubspot/bukken/schema", "method": "GET", "description": "HubSpot物件情報スキーマ取得"},
             {"path": "/hubspot/bukken/properties", "method": "GET", "description": "HubSpot物件情報プロパティ一覧取得"},
+            {"path": "/hubspot/property-options/{property_name}", "method": "GET", "description": "HubSpotプロパティの選択肢取得"},
             {"path": "/hubspot/health", "method": "GET", "description": "HubSpot API接続テスト"},
             {"path": "/hubspot/debug", "method": "GET", "description": "HubSpot設定デバッグ情報"}
         ]
@@ -1027,6 +1028,33 @@ async def get_hubspot_bukken_list(limit: int = 100, after: Optional[str] = None,
     except Exception as e:
         logger.error(f"Failed to get HubSpot bukken list: {str(e)}")
         raise HTTPException(status_code=500, detail=f"物件情報一覧の取得に失敗しました: {str(e)}")
+
+@app.get("/hubspot/property-options/{property_name}", response_model=HubSpotResponse)
+async def get_hubspot_property_options(property_name: str, api_key: str = Depends(verify_api_key)):
+    """HubSpotプロパティの選択肢を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        # プロパティの詳細情報を取得
+        options = await hubspot_bukken_client.get_property_options(property_name)
+        if not options:
+            raise HTTPException(status_code=404, detail=f"プロパティ '{property_name}' の選択肢が見つかりません")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"プロパティ '{property_name}' の選択肢を正常に取得しました",
+            data={"options": options},
+            count=len(options)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get property options for {property_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"プロパティ選択肢の取得に失敗しました: {str(e)}")
 
 @app.get("/hubspot/bukken/{bukken_id}", response_model=HubSpotResponse)
 async def get_hubspot_bukken(bukken_id: str, api_key: str = Depends(verify_api_key)):
