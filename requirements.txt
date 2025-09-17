@@ -11,6 +11,9 @@ PyPDF2==3.0.1
 pdf2image==1.16.3
 Pillow==10.1.0
 pytesseract==0.3.10
+# Image enhancement for better OCR
+opencv-python==4.8.1.78
+numpy==1.24.3
 # AI processing
 google-generativeai==0.3.2
 # Google Vision API

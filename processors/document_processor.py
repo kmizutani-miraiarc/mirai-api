@@ -115,28 +115,80 @@ class DocumentProcessor:
         return text
     
     def _extract_text_from_pdf_with_ocr(self, pdf_path: str) -> str:
-        """OCRを使用してPDFからテキストを抽出"""
+        """OCRを使用してPDFからテキストを抽出（高精度設定）"""
         try:
-            # PDFを画像に変換
-            images = convert_from_path(pdf_path, dpi=300)
+            # 複数のDPIで試行して最適な結果を選択
+            dpi_options = [300, 400, 600]
+            best_text = ""
+            best_confidence = 0
             
-            text = ""
-            for i, image in enumerate(images):
-                # 一時ファイルとして保存
-                temp_image_path = os.path.join(self.temp_dir, f"page_{i}.png")
-                image.save(temp_image_path, 'PNG')
-                
-                # OCRでテキスト抽出
-                page_text = self._extract_text_from_image(temp_image_path)
-                text += page_text + "\n"
-                
-                # 一時ファイルを削除
-                os.remove(temp_image_path)
+            for dpi in dpi_options:
+                try:
+                    logger.info(f"Trying OCR with DPI: {dpi}")
+                    # PDFを画像に変換
+                    images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=5)  # 最初の5ページのみ処理
+                    
+                    page_texts = []
+                    total_confidence = 0
+                    valid_pages = 0
+                    
+                    for i, image in enumerate(images):
+                        # 一時ファイルとして保存
+                        temp_image_path = os.path.join(self.temp_dir, f"page_{i}_dpi_{dpi}.png")
+                        image.save(temp_image_path, 'PNG')
+                        
+                        # 画像の前処理
+                        processed_image = self._preprocess_image(image)
+                        
+                        # OCRでテキスト抽出
+                        page_text = self._extract_text_with_multiple_configs(processed_image)
+                        
+                        if page_text.strip():
+                            page_texts.append(page_text)
+                            valid_pages += 1
+                    
+                    # 全ページのテキストを結合
+                    combined_text = "\n".join(page_texts)
+                    
+                    # テキストの品質を評価（長さと文字の多様性）
+                    text_quality = self._evaluate_text_quality(combined_text)
+                    
+                    logger.info(f"DPI {dpi}: text_length={len(combined_text)}, quality_score={text_quality:.2f}")
+                    
+                    if text_quality > best_confidence:
+                        best_confidence = text_quality
+                        best_text = combined_text
+                        
+                except Exception as e:
+                    logger.warning(f"OCR with DPI {dpi} failed: {str(e)}")
+                    continue
             
-            return text
+            logger.info(f"Best OCR result: quality_score={best_confidence:.2f}, text_length={len(best_text)}")
+            return best_text
+            
         except Exception as e:
-            logger.error(f"OCR extraction from PDF failed: {str(e)}")
-            raise
+            logger.error(f"PDF OCR extraction failed: {str(e)}")
+            return ""
+    
+    def _evaluate_text_quality(self, text: str) -> float:
+        """テキストの品質を評価（0-1のスコア）"""
+        if not text.strip():
+            return 0.0
+        
+        # 基本的な品質指標
+        length_score = min(len(text) / 1000, 1.0)  # 長さスコア（最大1.0）
+        
+        # 文字の多様性（日本語文字の割合）
+        japanese_chars = len([c for c in text if '\u3040' <= c <= '\u309F' or '\u30A0' <= c <= '\u30FF' or '\u4E00' <= c <= '\u9FAF'])
+        diversity_score = min(japanese_chars / len(text), 1.0) if text else 0.0
+        
+        # 数値の存在（物件情報に重要）
+        numbers = len([c for c in text if c.isdigit()])
+        number_score = min(numbers / 100, 1.0) if text else 0.0
+        
+        # 総合スコア
+        total_score = (length_score * 0.4 + diversity_score * 0.4 + number_score * 0.2)
+        return total_score
     
     def _extract_text_from_image(self, image_path: str) -> str:
         """
@@ -225,13 +277,113 @@ class DocumentProcessor:
             # 画像を開く
             image = Image.open(image_path)
             
-            # OCRでテキスト抽出（日本語と英語）
-            text = pytesseract.image_to_string(image, lang='jpn+eng')
+            # 画像の前処理
+            processed_image = self._preprocess_image(image)
+            
+            # 複数のOCR設定を試行して最適な結果を選択
+            text = self._extract_text_with_multiple_configs(processed_image)
             
             return text
         except Exception as e:
             logger.error(f"Local OCR extraction failed: {str(e)}")
             raise
+    
+    def _preprocess_image(self, image: Image.Image) -> Image.Image:
+        """画像の前処理でOCR精度を向上"""
+        try:
+            # グレースケール変換
+            if image.mode != 'L':
+                image = image.convert('L')
+            
+            # 画像のサイズを調整（DPIを考慮）
+            width, height = image.size
+            if width < 1000 or height < 1000:
+                # 小さな画像は拡大
+                scale_factor = max(1000 / width, 1000 / height)
+                new_width = int(width * scale_factor)
+                new_height = int(height * scale_factor)
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # コントラストと明度の調整
+            from PIL import ImageEnhance
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.5)  # コントラストを1.5倍に
+            
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(2.0)  # シャープネスを2倍に
+            
+            return image
+            
+        except Exception as e:
+            logger.warning(f"Image preprocessing failed: {str(e)}")
+            return image
+    
+    def _extract_text_with_multiple_configs(self, image: Image.Image) -> str:
+        """複数のOCR設定を試行して最適な結果を選択"""
+        try:
+            # OCR設定のリスト（精度重視）
+            ocr_configs = [
+                # 高精度設定（日本語+英語）
+                {
+                    'config': r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽゃゅょっー・、。！？（）「」【】',
+                    'lang': 'jpn+eng'
+                },
+                # 自動ページ分割
+                {
+                    'config': r'--oem 3 --psm 3',
+                    'lang': 'jpn+eng'
+                },
+                # 単一テキストブロック
+                {
+                    'config': r'--oem 3 --psm 7',
+                    'lang': 'jpn+eng'
+                },
+                # 英語のみ（フォールバック）
+                {
+                    'config': r'--oem 3 --psm 6',
+                    'lang': 'eng'
+                }
+            ]
+            
+            best_text = ""
+            best_confidence = 0
+            
+            for i, config in enumerate(ocr_configs):
+                try:
+                    # テキスト抽出
+                    text = pytesseract.image_to_string(image, config=config['config'], lang=config['lang'])
+                    
+                    # 信頼度を取得
+                    data = pytesseract.image_to_data(
+                        image, 
+                        config=config['config'], 
+                        lang=config['lang'], 
+                        output_type=pytesseract.Output.DICT
+                    )
+                    
+                    confidences = [int(conf) for conf in data['conf'] if int(conf) > 0]
+                    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                    
+                    logger.info(f"OCR config {i+1}: confidence={avg_confidence:.2f}%, text_length={len(text.strip())}")
+                    
+                    if avg_confidence > best_confidence and len(text.strip()) > len(best_text.strip()):
+                        best_confidence = avg_confidence
+                        best_text = text.strip()
+                        
+                except Exception as e:
+                    logger.warning(f"OCR config {i+1} failed: {str(e)}")
+                    continue
+            
+            logger.info(f"Best OCR result: confidence={best_confidence:.2f}%, text_length={len(best_text)}")
+            return best_text
+            
+        except Exception as e:
+            logger.error(f"Multiple OCR configs failed: {str(e)}")
+            # フォールバック: 基本的な設定で試行
+            try:
+                return pytesseract.image_to_string(image, lang='jpn+eng')
+            except:
+                return ""
     
     def get_ocr_status(self) -> Dict[str, Any]:
         """
