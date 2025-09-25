@@ -107,8 +107,9 @@ class DocumentProcessor:
         try:
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
-                for page_num in range(len(pdf_reader.pages)):
-                    page = pdf_reader.pages[page_num]
+                # 1ページ目のみ処理
+                if len(pdf_reader.pages) > 0:
+                    page = pdf_reader.pages[0]
                     text += page.extract_text() + "\n"
         except Exception as e:
             logger.warning(f"PyPDF2 extraction failed: {str(e)}")
@@ -126,7 +127,7 @@ class DocumentProcessor:
                 try:
                     logger.info(f"Trying OCR with DPI: {dpi}")
                     # PDFを画像に変換（パフォーマンス最適化）
-                    images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=3)  # 最初の3ページのみ処理
+                    images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=1)  # 1ページ目のみ処理
                     
                     page_texts = []
                     total_confidence = 0
