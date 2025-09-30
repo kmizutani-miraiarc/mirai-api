@@ -407,3 +407,233 @@ class HubSpotDealsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to get deals for bukken {bukken_id}: {str(e)}")
             return []
+
+    async def get_pipeline_history(self, pipeline_id: str, options: Dict[str, Any] = None) -> Dict[str, Any]:
+        """パイプラインの変更履歴を取得（mirai-baseのgetPipelineHistoryと同等）"""
+        if options is None:
+            options = {}
+            
+        try:
+            logger.info(f"Getting pipeline history for pipeline {pipeline_id}")
+            
+            # パイプライン情報を取得
+            pipeline_stages = await self.get_pipeline_stages(pipeline_id)
+            if not pipeline_stages:
+                logger.error(f"Pipeline {pipeline_id} not found")
+                return {"success": False, "error": "Pipeline not found"}
+            
+            # パイプライン情報を取得（別のAPIエンドポイントを使用）
+            try:
+                pipeline_info = await self._make_request("GET", f"/crm/v3/pipelines/deals/{pipeline_id}")
+            except Exception as e:
+                logger.warning(f"Failed to get pipeline info: {str(e)}")
+                pipeline_info = {"id": pipeline_id, "label": f"Pipeline {pipeline_id}", "displayOrder": 0}
+            
+            # 全取引を取得（履歴付き）
+            deals = await self.get_all_deals_with_history(pipeline_id, options)
+            
+            # 各取引の詳細情報を処理
+            deals_with_history = []
+            for deal in deals:
+                try:
+                    # 担当者名を取得
+                    owner_name = "-"
+                    if deal.get("properties", {}).get("hubspot_owner_id"):
+                        try:
+                            # 担当者情報を取得（簡易版）
+                            owner_id = deal["properties"]["hubspot_owner_id"]
+                            # ここでは簡易的にIDを表示（実際の実装では担当者APIを呼び出す）
+                            owner_name = f"Owner {owner_id}"
+                        except Exception as e:
+                            logger.warning(f"Failed to get owner name for {deal.get('id')}: {str(e)}")
+                    
+                    # ステージ名を取得
+                    stage_id = deal.get("properties", {}).get("dealstage")
+                    stage_label = self._get_stage_label(stage_id, pipeline_stages)
+                    
+                    deal_info = {
+                        "id": deal.get("id"),
+                        "name": deal.get("properties", {}).get("dealname", ""),
+                        "stage": stage_label,
+                        "stageId": stage_id,
+                        "amount": deal.get("properties", {}).get("amount"),
+                        "owner": owner_name,
+                        "companyName": deal.get("properties", {}).get("company_name", "-"),
+                        "contactName": deal.get("properties", {}).get("contact_name", "-"),
+                        "createdDate": deal.get("properties", {}).get("createdate"),
+                        "lastModifiedDate": deal.get("properties", {}).get("hs_lastmodifieddate"),
+                        "hubspot_url": f"https://app-na2.hubspot.com/contacts/{self._get_hubspot_id()}/deal/{deal.get('id')}",
+                        "propertiesWithHistory": deal.get("propertiesWithHistory", {}),
+                        "pipeline": deal.get("properties", {}).get("pipeline")
+                    }
+                    deals_with_history.append(deal_info)
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process deal {deal.get('id')}: {str(e)}")
+                    continue
+            
+            return {
+                "success": True,
+                "pipeline": {
+                    "id": pipeline_id,
+                    "label": pipeline_info.get("label", ""),
+                    "displayOrder": pipeline_info.get("displayOrder", 0)
+                },
+                "deals": deals_with_history,
+                "total": len(deals_with_history)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get pipeline history for {pipeline_id}: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    async def get_all_deals_with_history(self, pipeline_id: str, options: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """指定されたパイプラインの全取引を取得（履歴付き）"""
+        if options is None:
+            options = {}
+            
+        try:
+            logger.info(f"Getting all deals with history for pipeline {pipeline_id}")
+            deals = []
+            after = None
+            
+            # フィルター条件を構築
+            filters = [
+                {
+                    "propertyName": "pipeline",
+                    "operator": "EQ",
+                    "value": pipeline_id
+                }
+            ]
+            
+            if options.get("stage"):
+                filters.append({
+                    "propertyName": "dealstage",
+                    "operator": "EQ",
+                    "value": options["stage"]
+                })
+            
+            if options.get("owner"):
+                filters.append({
+                    "propertyName": "hubspot_owner_id",
+                    "operator": "EQ",
+                    "value": options["owner"]
+                })
+            
+            if options.get("keyword"):
+                filters.append({
+                    "propertyName": "dealname",
+                    "operator": "CONTAINS_TOKEN",
+                    "value": options["keyword"]
+                })
+            
+            # 年月のfrom-to条件を追加
+            if options.get("fromDate"):
+                filters.append({
+                    "propertyName": "createdate",
+                    "operator": "GTE",
+                    "value": options["fromDate"]
+                })
+            
+            if options.get("toDate"):
+                filters.append({
+                    "propertyName": "createdate",
+                    "operator": "LTE",
+                    "value": options["toDate"]
+                })
+            
+            # ページネーションで全取引を取得
+            while True:
+                search_data = {
+                    "filterGroups": [{"filters": filters}],
+                    "properties": [
+                        "dealname",
+                        "dealstage",
+                        "amount",
+                        "hubspot_owner_id",
+                        "createdate",
+                        "pipeline",
+                        "company_name",
+                        "contact_name",
+                        "hs_lastmodifieddate"
+                    ],
+                    "propertiesWithHistory": ["dealstage"],
+                    "limit": options.get("limit", 100)
+                }
+                
+                if after:
+                    search_data["after"] = after
+                
+                response = await self._make_request(
+                    "POST",
+                    "/crm/v3/objects/deals/search",
+                    json=search_data
+                )
+                
+                deals.extend(response.get("results", []))
+                
+                # ページネーションの確認
+                paging = response.get("paging", {})
+                if not paging.get("next"):
+                    break
+                after = paging["next"].get("after")
+            
+            logger.info(f"Found {len(deals)} deals for pipeline {pipeline_id}")
+            
+            # 各取引の履歴を個別に取得
+            deals_with_history = []
+            for deal in deals:
+                try:
+                    deal_id = deal.get("id")
+                    if not deal_id:
+                        continue
+                    
+                    # 個別に履歴を取得
+                    history_response = await self._make_request(
+                        "GET",
+                        f"/crm/v3/objects/deals/{deal_id}",
+                        params={
+                            "properties": "dealstage",
+                            "propertiesWithHistory": "dealstage"
+                        }
+                    )
+                    
+                    # 履歴データを統合
+                    deal_with_history = {
+                        **deal,
+                        "propertiesWithHistory": {
+                            "dealstage": {
+                                "versions": history_response.get("propertiesWithHistory", {}).get("dealstage", [])
+                            }
+                        }
+                    }
+                    
+                    deals_with_history.append(deal_with_history)
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to get history for deal {deal.get('id')}: {str(e)}")
+                    # 履歴取得に失敗した場合は元のデータを返す
+                    deals_with_history.append(deal)
+            
+            logger.info(f"Retrieved {len(deals_with_history)} deals with history")
+            return deals_with_history
+            
+        except Exception as e:
+            logger.error(f"Failed to get all deals with history for pipeline {pipeline_id}: {str(e)}")
+            return []
+
+    def _get_stage_label(self, stage_id: str, pipeline_stages: List[Dict[str, Any]]) -> str:
+        """ステージIDからステージラベルを取得"""
+        if not stage_id or not pipeline_stages:
+            return "Unknown"
+        
+        for stage in pipeline_stages:
+            if stage.get("id") == stage_id:
+                return stage.get("label", "Unknown")
+        
+        return "Unknown"
+
+    def _get_hubspot_id(self) -> str:
+        """HubSpot IDを取得（環境変数から）"""
+        import os
+        return os.getenv("HUBSPOT_ID", "unknown")

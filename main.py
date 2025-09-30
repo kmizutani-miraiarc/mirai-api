@@ -428,6 +428,7 @@ async def api_info():
             {"path": "/hubspot/deals/search", "method": "POST", "description": "HubSpot取引検索（パイプライン、取引名、ステージ、取引担当者で検索）"},
             {"path": "/hubspot/deals/pipelines", "method": "GET", "description": "HubSpotパイプライン一覧取得"},
             {"path": "/hubspot/deals/pipelines/{pipeline_id}/stages", "method": "GET", "description": "HubSpotパイプラインに紐づくステージ一覧取得"},
+            {"path": "/hubspot/deals/pipelines/{pipeline_id}/history", "method": "GET", "description": "HubSpotパイプラインの変更履歴取得（履歴付き取引データ）"},
             {"path": "/hubspot/bukken/{bukken_id}/deals", "method": "GET", "description": "HubSpot物件に関連づけられた取引取得"},
             {"path": "/hubspot/bukken", "method": "GET", "description": "HubSpot物件情報一覧取得"},
             {"path": "/hubspot/bukken", "method": "POST", "description": "HubSpot物件情報作成"},
@@ -1627,6 +1628,75 @@ async def get_hubspot_bukken_deals(bukken_id: str, api_key: str = Depends(verify
         raise HTTPException(
             status_code=500,
             detail=f"物件 '{bukken_id}' の取引取得に失敗しました: {str(e)}"
+        )
+
+@app.get("/hubspot/deals/pipelines/{pipeline_id}/history", response_model=HubSpotResponse)
+async def get_hubspot_pipeline_history(
+    pipeline_id: str, 
+    stage: Optional[str] = None,
+    owner: Optional[str] = None,
+    keyword: Optional[str] = None,
+    fromDate: Optional[str] = None,
+    toDate: Optional[str] = None,
+    limit: Optional[int] = 100,
+    api_key: str = Depends(verify_api_key)
+):
+    """パイプラインの変更履歴を取得（mirai-baseのgetPipelineHistoryと同等）"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        # オプションを構築
+        options = {}
+        if stage:
+            options["stage"] = stage
+        if owner:
+            options["owner"] = owner
+        if keyword:
+            options["keyword"] = keyword
+        if fromDate:
+            options["fromDate"] = fromDate
+        if toDate:
+            options["toDate"] = toDate
+        if limit:
+            options["limit"] = limit
+        
+        logger.info(f"Getting pipeline history for pipeline {pipeline_id} with options: {options}")
+        
+        # パイプライン履歴を取得
+        history_result = await hubspot_deals_client.get_pipeline_history(pipeline_id, options)
+        
+        if not history_result.get("success", False):
+            raise HTTPException(
+                status_code=500,
+                detail=f"パイプライン履歴の取得に失敗しました: {history_result.get('error', 'Unknown error')}"
+            )
+        
+        deals = history_result.get("deals", [])
+        pipeline_info = history_result.get("pipeline", {})
+        
+        logger.info(f"Retrieved {len(deals)} deals with history for pipeline {pipeline_id}")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"パイプライン '{pipeline_id}' の変更履歴を正常に取得しました（{len(deals)}件の取引）",
+            data={
+                "pipeline": pipeline_info,
+                "deals": deals,
+                "total": len(deals)
+            },
+            count=len(deals)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get pipeline history for {pipeline_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"パイプライン '{pipeline_id}' の履歴取得に失敗しました: {str(e)}"
         )
 
 
