@@ -326,7 +326,9 @@ class DealSearchRequest(BaseModel):
             "amount",
             "closedate",
             "createdate",
-            "hs_lastmodifieddate"
+            "hs_lastmodifieddate",
+            "contract_date",
+            "settlement_date"
         ],
         example=[
             "dealname",

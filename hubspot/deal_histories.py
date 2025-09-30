@@ -153,47 +153,188 @@ class HubSpotDealHistoriesClient(HubSpotBaseClient):
         return all_histories
     
     async def get_contract_histories(self, from_date: Optional[str] = None, 
-                                   to_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        """契約ステージの履歴を取得"""
-        return await self.get_all_deal_histories(
-            stage="契約",
-            from_date=from_date,
-            to_date=to_date
-        )
+                                    to_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """契約ステージの履歴を取得（仕入パイプラインのみ）"""
+        try:
+            logger.info(f"Getting contract histories from {from_date} to {to_date}")
+            
+            # フィルター条件を構築
+            filters = [
+                {
+                    "propertyName": "deal_history_stage",
+                    "operator": "EQ",
+                    "value": "契約"
+                },
+                {
+                    "propertyName": "deal_history_pipeline",
+                    "operator": "EQ",
+                    "value": "仕入"
+                }
+            ]
+            
+            if from_date:
+                filters.append({
+                    "propertyName": "hs_createdate",
+                    "operator": "GTE",
+                    "value": from_date
+                })
+            
+            if to_date:
+                filters.append({
+                    "propertyName": "hs_createdate",
+                    "operator": "LTE",
+                    "value": to_date
+                })
+            
+            # 検索データを構築
+            search_data = {
+                "filterGroups": [{"filters": filters}],
+                "properties": [
+                    "deal_history_name",
+                    "deal_history_stage",
+                    "deal_history_owner",
+                    "deal_history_pipeline",
+                    "deal_history_answer_price",
+                    "deal_history_sales_price",
+                    "hs_createdate",
+                    "hs_lastmodifieddate",
+                    "hubspot_owner_id"
+                ],
+                "limit": 200
+            }
+            
+            logger.info(f"Search data: {search_data}")
+            
+            response = await self._make_request(
+                "POST",
+                "/crm/v3/objects/2-172324672/search",
+                json=search_data
+            )
+            
+            results = response.get("results", [])
+            logger.info(f"Found {len(results)} contract histories")
+            
+            # デバッグ: 最初の結果の構造を確認
+            if results:
+                logger.info(f"First result structure: {results[0]}")
+                logger.info(f"First result properties: {results[0].get('properties', {})}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Failed to get contract histories: {str(e)}")
+            return []
     
     async def get_settlement_histories(self, from_date: Optional[str] = None, 
                                      to_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        """決済ステージの履歴を取得"""
-        return await self.get_all_deal_histories(
-            stage="決済",
-            from_date=from_date,
-            to_date=to_date
-        )
+        """決済ステージの履歴を取得（仕入パイプラインのみ）"""
+        try:
+            logger.info(f"Getting settlement histories from {from_date} to {to_date}")
+            
+            # フィルター条件を構築
+            filters = [
+                {
+                    "propertyName": "deal_history_stage",
+                    "operator": "EQ",
+                    "value": "決済"
+                },
+                {
+                    "propertyName": "deal_history_pipeline",
+                    "operator": "EQ",
+                    "value": "仕入"
+                }
+            ]
+            
+            if from_date:
+                filters.append({
+                    "propertyName": "hs_createdate",
+                    "operator": "GTE",
+                    "value": from_date
+                })
+            
+            if to_date:
+                filters.append({
+                    "propertyName": "hs_createdate",
+                    "operator": "LTE",
+                    "value": to_date
+                })
+            
+            # 検索データを構築
+            search_data = {
+                "filterGroups": [{"filters": filters}],
+                "properties": [
+                    "deal_history_name",
+                    "deal_history_stage",
+                    "deal_history_owner",
+                    "deal_history_pipeline",
+                    "deal_history_answer_price",
+                    "deal_history_sales_price",
+                    "hs_createdate",
+                    "hs_lastmodifieddate",
+                    "hubspot_owner_id"
+                ],
+                "limit": 200
+            }
+            
+            logger.info(f"Search data: {search_data}")
+            
+            response = await self._make_request(
+                "POST",
+                "/crm/v3/objects/2-172324672/search",
+                json=search_data
+            )
+            
+            results = response.get("results", [])
+            logger.info(f"Found {len(results)} settlement histories")
+            
+            # デバッグ: 最初の結果の構造を確認
+            if results:
+                logger.info(f"First result structure: {results[0]}")
+                logger.info(f"First result properties: {results[0].get('properties', {})}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Failed to get settlement histories: {str(e)}")
+            return []
     
     async def get_monthly_contract_counts(self, from_date: str, to_date: str) -> Dict[str, int]:
         """月別の契約件数を取得"""
         contract_histories = await self.get_contract_histories(from_date, to_date)
         
+        logger.info(f"Processing {len(contract_histories)} contract histories for monthly counts")
+        
         monthly_counts = {}
         for history in contract_histories:
-            created_date = history.get("hs_createdate")
+            created_date = history.get("properties", {}).get("hs_createdate")
             if created_date:
                 # 日付から年月を抽出
                 year_month = created_date[:7]  # YYYY-MM形式
                 monthly_counts[year_month] = monthly_counts.get(year_month, 0) + 1
+                logger.info(f"Added to {year_month}: {created_date}")
+            else:
+                logger.warn(f"No created date for history: {history.get('id')}")
         
+        logger.info(f"Monthly contract counts: {monthly_counts}")
         return monthly_counts
     
     async def get_monthly_settlement_counts(self, from_date: str, to_date: str) -> Dict[str, int]:
         """月別の決済件数を取得"""
         settlement_histories = await self.get_settlement_histories(from_date, to_date)
         
+        logger.info(f"Processing {len(settlement_histories)} settlement histories for monthly counts")
+        
         monthly_counts = {}
         for history in settlement_histories:
-            created_date = history.get("hs_createdate")
+            created_date = history.get("properties", {}).get("hs_createdate")
             if created_date:
                 # 日付から年月を抽出
                 year_month = created_date[:7]  # YYYY-MM形式
                 monthly_counts[year_month] = monthly_counts.get(year_month, 0) + 1
+                logger.info(f"Added to {year_month}: {created_date}")
+            else:
+                logger.warn(f"No created date for history: {history.get('id')}")
         
+        logger.info(f"Monthly settlement counts: {monthly_counts}")
         return monthly_counts
+
