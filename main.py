@@ -11,6 +11,7 @@ from hubspot.contacts import HubSpotContactsClient
 from hubspot.companies import HubSpotCompaniesClient
 from hubspot.deals import HubSpotDealsClient
 from hubspot.bukken import HubSpotBukkenClient
+from hubspot.deal_histories import HubSpotDealHistoriesClient
 from hubspot.config import Config
 from database.connection import db_connection
 from database.api_keys import api_key_manager
@@ -325,7 +326,9 @@ class DealSearchRequest(BaseModel):
             "amount",
             "closedate",
             "createdate",
-            "hs_lastmodifieddate"
+            "hs_lastmodifieddate",
+            "contract_date",
+            "settlement_date"
         ],
         example=[
             "dealname",
@@ -363,6 +366,7 @@ hubspot_contacts_client = HubSpotContactsClient()
 hubspot_companies_client = HubSpotCompaniesClient()
 hubspot_deals_client = HubSpotDealsClient()
 hubspot_bukken_client = HubSpotBukkenClient()
+hubspot_deal_histories_client = HubSpotDealHistoriesClient()
 
 @app.get("/")
 async def root():
@@ -428,6 +432,7 @@ async def api_info():
             {"path": "/hubspot/deals/search", "method": "POST", "description": "HubSpot取引検索（パイプライン、取引名、ステージ、取引担当者で検索）"},
             {"path": "/hubspot/deals/pipelines", "method": "GET", "description": "HubSpotパイプライン一覧取得"},
             {"path": "/hubspot/deals/pipelines/{pipeline_id}/stages", "method": "GET", "description": "HubSpotパイプラインに紐づくステージ一覧取得"},
+            {"path": "/hubspot/deals/pipelines/{pipeline_id}/history", "method": "GET", "description": "HubSpotパイプラインの変更履歴取得（履歴付き取引データ）"},
             {"path": "/hubspot/bukken/{bukken_id}/deals", "method": "GET", "description": "HubSpot物件に関連づけられた取引取得"},
             {"path": "/hubspot/bukken", "method": "GET", "description": "HubSpot物件情報一覧取得"},
             {"path": "/hubspot/bukken", "method": "POST", "description": "HubSpot物件情報作成"},
@@ -439,7 +444,14 @@ async def api_info():
             {"path": "/hubspot/bukken/properties", "method": "GET", "description": "HubSpot物件情報プロパティ一覧取得"},
             {"path": "/hubspot/property-options/{property_name}", "method": "GET", "description": "HubSpotプロパティの選択肢取得"},
             {"path": "/hubspot/health", "method": "GET", "description": "HubSpot API接続テスト"},
-            {"path": "/hubspot/debug", "method": "GET", "description": "HubSpot設定デバッグ情報"}
+            {"path": "/hubspot/debug", "method": "GET", "description": "HubSpot設定デバッグ情報"},
+            {"path": "/hubspot/deal-histories/schema", "method": "GET", "description": "deal_historiesカスタムオブジェクトスキーマ取得"},
+            {"path": "/hubspot/deal-histories", "method": "GET", "description": "deal_historiesカスタムオブジェクト一覧取得"},
+            {"path": "/hubspot/deal-histories/by-deal/{deal_id}", "method": "GET", "description": "特定の取引IDの履歴取得"},
+            {"path": "/hubspot/deal-histories/contracts", "method": "GET", "description": "契約ステージの履歴取得"},
+            {"path": "/hubspot/deal-histories/settlements", "method": "GET", "description": "決済ステージの履歴取得"},
+            {"path": "/hubspot/deal-histories/monthly-contracts", "method": "GET", "description": "月別契約件数取得"},
+            {"path": "/hubspot/deal-histories/monthly-settlements", "method": "GET", "description": "月別決済件数取得"}
         ]
     }
 
@@ -1629,6 +1641,75 @@ async def get_hubspot_bukken_deals(bukken_id: str, api_key: str = Depends(verify
             detail=f"物件 '{bukken_id}' の取引取得に失敗しました: {str(e)}"
         )
 
+@app.get("/hubspot/deals/pipelines/{pipeline_id}/history", response_model=HubSpotResponse)
+async def get_hubspot_pipeline_history(
+    pipeline_id: str, 
+    stage: Optional[str] = None,
+    owner: Optional[str] = None,
+    keyword: Optional[str] = None,
+    fromDate: Optional[str] = None,
+    toDate: Optional[str] = None,
+    limit: Optional[int] = 100,
+    api_key: str = Depends(verify_api_key)
+):
+    """パイプラインの変更履歴を取得（mirai-baseのgetPipelineHistoryと同等）"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500, 
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+        
+        # オプションを構築
+        options = {}
+        if stage:
+            options["stage"] = stage
+        if owner:
+            options["owner"] = owner
+        if keyword:
+            options["keyword"] = keyword
+        if fromDate:
+            options["fromDate"] = fromDate
+        if toDate:
+            options["toDate"] = toDate
+        if limit:
+            options["limit"] = limit
+        
+        logger.info(f"Getting pipeline history for pipeline {pipeline_id} with options: {options}")
+        
+        # パイプライン履歴を取得
+        history_result = await hubspot_deals_client.get_pipeline_history(pipeline_id, options)
+        
+        if not history_result.get("success", False):
+            raise HTTPException(
+                status_code=500,
+                detail=f"パイプライン履歴の取得に失敗しました: {history_result.get('error', 'Unknown error')}"
+            )
+        
+        deals = history_result.get("deals", [])
+        pipeline_info = history_result.get("pipeline", {})
+        
+        logger.info(f"Retrieved {len(deals)} deals with history for pipeline {pipeline_id}")
+        
+        return HubSpotResponse(
+            status="success",
+            message=f"パイプライン '{pipeline_id}' の変更履歴を正常に取得しました（{len(deals)}件の取引）",
+            data={
+                "pipeline": pipeline_info,
+                "deals": deals,
+                "total": len(deals)
+            },
+            count=len(deals)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get pipeline history for {pipeline_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"パイプライン '{pipeline_id}' の履歴取得に失敗しました: {str(e)}"
+        )
+
 
 
 # 物件情報分析API
@@ -1745,6 +1826,269 @@ async def analyze_property_document(
             except Exception as cleanup_error:
                 logger.error(f'Failed to delete temporary file: {str(cleanup_error)}')
 
+
+# =============================================================================
+# deal_histories カスタムオブジェクト エンドポイント
+# =============================================================================
+
+@app.get("/hubspot/deal-histories/schema", response_model=HubSpotResponse)
+async def get_deal_histories_schema(
+    api_key: str = Depends(verify_api_key)
+):
+    """deal_historiesカスタムオブジェクトのスキーマを取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info("Getting deal_histories schema")
+
+        schema = await hubspot_deal_histories_client.get_deal_histories_schema()
+
+        logger.info(f"Retrieved deal_histories schema")
+
+        return HubSpotResponse(
+            status="success",
+            message="deal_historiesスキーマを正常に取得しました",
+            data={"schema": schema},
+            count=1
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get deal_histories schema: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"deal_historiesスキーマの取得に失敗しました: {str(e)}"
+        )
+
+
+@app.get("/hubspot/deal-histories", response_model=HubSpotResponse)
+async def get_deal_histories(
+    limit: Optional[int] = 100,
+    after: Optional[str] = None,
+    deal_id: Optional[str] = None,
+    stage: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """deal_historiesカスタムオブジェクトの一覧を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info(f"Getting deal histories with filters: deal_id={deal_id}, stage={stage}, from_date={from_date}, to_date={to_date}")
+
+        histories = await hubspot_deal_histories_client.get_deal_histories(
+            limit=limit,
+            after=after,
+            deal_id=deal_id,
+            stage=stage,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        logger.info(f"Retrieved {len(histories)} deal histories")
+
+        return HubSpotResponse(
+            status="success",
+            message=f"deal_historiesを正常に取得しました（{len(histories)}件）",
+            data={"histories": histories, "total": len(histories)},
+            count=len(histories)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get deal histories: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"deal_historiesの取得に失敗しました: {str(e)}"
+        )
+
+
+@app.get("/hubspot/deal-histories/by-deal/{deal_id}", response_model=HubSpotResponse)
+async def get_deal_histories_by_deal_id(
+    deal_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """特定の取引IDの履歴を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info(f"Getting deal histories for deal ID: {deal_id}")
+
+        histories = await hubspot_deal_histories_client.get_deal_histories_by_deal_id(deal_id)
+
+        logger.info(f"Retrieved {len(histories)} histories for deal {deal_id}")
+
+        return HubSpotResponse(
+            status="success",
+            message=f"取引ID '{deal_id}' の履歴を正常に取得しました（{len(histories)}件）",
+            data={"histories": histories, "total": len(histories)},
+            count=len(histories)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get deal histories for deal {deal_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"取引ID '{deal_id}' の履歴取得に失敗しました: {str(e)}"
+        )
+
+
+@app.get("/hubspot/deal-histories/contracts", response_model=HubSpotResponse)
+async def get_contract_histories(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """契約ステージの履歴を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info(f"Getting contract histories from {from_date} to {to_date}")
+
+        histories = await hubspot_deal_histories_client.get_contract_histories(from_date, to_date)
+
+        logger.info(f"Retrieved {len(histories)} contract histories")
+
+        return HubSpotResponse(
+            status="success",
+            message=f"契約履歴を正常に取得しました（{len(histories)}件）",
+            data={"histories": histories, "total": len(histories)},
+            count=len(histories)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get contract histories: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"契約履歴の取得に失敗しました: {str(e)}"
+        )
+
+
+@app.get("/hubspot/deal-histories/settlements", response_model=HubSpotResponse)
+async def get_settlement_histories(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """決済ステージの履歴を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info(f"Getting settlement histories from {from_date} to {to_date}")
+
+        histories = await hubspot_deal_histories_client.get_settlement_histories(from_date, to_date)
+
+        logger.info(f"Retrieved {len(histories)} settlement histories")
+
+        return HubSpotResponse(
+            status="success",
+            message=f"決済履歴を正常に取得しました（{len(histories)}件）",
+            data={"histories": histories, "total": len(histories)},
+            count=len(histories)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get settlement histories: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"決済履歴の取得に失敗しました: {str(e)}"
+        )
+
+
+@app.get("/hubspot/deal-histories/monthly-contracts", response_model=HubSpotResponse)
+async def get_monthly_contract_counts(
+    from_date: str,
+    to_date: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """月別の契約件数を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info(f"Getting monthly contract counts from {from_date} to {to_date}")
+
+        counts = await hubspot_deal_histories_client.get_monthly_contract_counts(from_date, to_date)
+
+        logger.info(f"Retrieved monthly contract counts: {counts}")
+
+        return HubSpotResponse(
+            status="success",
+            message=f"月別契約件数を正常に取得しました",
+            data={"monthly_counts": counts, "total": sum(counts.values())},
+            count=len(counts)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get monthly contract counts: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"月別契約件数の取得に失敗しました: {str(e)}"
+        )
+
+
+@app.get("/hubspot/deal-histories/monthly-settlements", response_model=HubSpotResponse)
+async def get_monthly_settlement_counts(
+    from_date: str,
+    to_date: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """月別の決済件数を取得"""
+    try:
+        if not Config.validate_config():
+            raise HTTPException(
+                status_code=500,
+                detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
+            )
+
+        logger.info(f"Getting monthly settlement counts from {from_date} to {to_date}")
+
+        counts = await hubspot_deal_histories_client.get_monthly_settlement_counts(from_date, to_date)
+
+        logger.info(f"Retrieved monthly settlement counts: {counts}")
+
+        return HubSpotResponse(
+            status="success",
+            message=f"月別決済件数を正常に取得しました",
+            data={"monthly_counts": counts, "total": sum(counts.values())},
+            count=len(counts)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get monthly settlement counts: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"月別決済件数の取得に失敗しました: {str(e)}"
+        )
 
 
 # 継続学習システムの初期化
