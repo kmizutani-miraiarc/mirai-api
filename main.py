@@ -330,7 +330,8 @@ class DealSearchRequest(BaseModel):
             "contract_date",
             "settlement_date",
             "bukken_created",
-            "introduction_datetime"
+            "introduction_datetime",
+            "deal_non_applicable"
         ],
         example=[
             "dealname",
