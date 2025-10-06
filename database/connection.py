@@ -87,3 +87,10 @@ class DatabaseConnection:
 
 # グローバルなデータベース接続インスタンス
 db_connection = DatabaseConnection()
+
+# FastAPIの依存性注入用関数
+async def get_db_pool():
+    """データベース接続プールを取得（FastAPI依存性注入用）"""
+    if not db_connection.pool:
+        await db_connection.create_pool()
+    return db_connection.pool

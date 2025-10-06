@@ -16,6 +16,8 @@ from hubspot.config import Config
 from database.connection import db_connection
 from database.api_keys import api_key_manager
 from processors import DocumentProcessor, AIProcessor
+from routers.profit_management import router as profit_management_router
+from routers.property_owner import router as property_owner_router
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +90,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ルーターを追加
+app.include_router(profit_management_router)
+app.include_router(property_owner_router)
 
 # レスポンス用のモデル
 class TestResponse(BaseModel):
