@@ -66,3 +66,4 @@ class PropertyOwnerListResponse(BaseModel):
     total: int = Field(..., description="総件数")
     limit: int = Field(..., description="取得件数制限")
     offset: int = Field(..., description="オフセット")
+

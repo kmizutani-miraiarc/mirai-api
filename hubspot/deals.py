@@ -41,7 +41,17 @@ class HubSpotDealsClient(HubSpotBaseClient):
                 "createdate",
                 "pipeline",
                 "closedate",
-                "hs_lastmodifieddate"
+                "hs_lastmodifieddate",
+                "introduction_datetime",
+                "deal_disclosure_date",
+                "deal_survey_review_date",
+                "purchase_date",
+                "deal_probability_b_date",
+                "deal_probability_a_date",
+                "deal_farewell_date",
+                "deal_lost_date",
+                "contract_date",
+                "settlement_date"
             ]
             result = await self._make_request(
                 "GET", 
@@ -555,7 +565,17 @@ class HubSpotDealsClient(HubSpotBaseClient):
                         "pipeline",
                         "company_name",
                         "contact_name",
-                        "hs_lastmodifieddate"
+                        "hs_lastmodifieddate",
+                        "introduction_datetime",
+                        "deal_disclosure_date",
+                        "deal_survey_review_date",
+                        "purchase_date",
+                        "deal_probability_b_date",
+                        "deal_probability_a_date",
+                        "deal_farewell_date",
+                        "deal_lost_date",
+                        "contract_date",
+                        "settlement_date"
                     ],
                     "propertiesWithHistory": ["dealstage"],
                     "limit": options.get("limit", 100)
