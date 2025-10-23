@@ -1602,7 +1602,7 @@ async def search_hubspot_deals(search_criteria: DealSearchRequest, api_key: str 
         logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
         logger.info(f"Search criteria details - limit: {search_data.get('limit', 100)}")
         
-        search_result = await hubspot_deals_client.search_deals(search_data)
+        search_result = await hubspot_deals_client.search_deals_with_associations(search_data)
         results = search_result.get("results", [])
         paging = search_result.get("paging", {})
         logger.info(f"Deal search completed. Found {len(results)} results")
