@@ -103,10 +103,11 @@ class HubSpotDealsClient(HubSpotBaseClient):
             return None
 
     async def get_deal_associations(self, deal_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """取引に関連づけられた会社とコンタクトを取得（レート制限対策付き）"""
+        """取引に関連づけられた会社、コンタクト、物件を取得（レート制限対策付き）"""
         associations = {
             "companies": [],
-            "contacts": []
+            "contacts": [],
+            "2-39155607": []  # 物件（bukken）のカスタムオブジェクトID
         }
         
         try:
@@ -187,11 +188,49 @@ class HubSpotDealsClient(HubSpotBaseClient):
                         
             except Exception as e:
                 logger.warning(f"Failed to get contact associations for deal {deal_id}: {str(e)}")
+            
+            # 物件の関連を取得
+            try:
+                bukken_result = await self._make_request(
+                    "GET", 
+                    f"/crm/v4/objects/deals/{deal_id}/associations/2-39155607",
+                    params={"limit": 100}
+                )
+                bukken_ids = [assoc.get("toObjectId") for assoc in bukken_result.get("results", [])]
+                logger.info(f"Found {len(bukken_ids)} bukken associations for deal {deal_id}")
+                
+                # 各物件の詳細情報を取得（レート制限対策付き）
+                for i, bukken_id in enumerate(bukken_ids):
+                    try:
+                        # レート制限対策: 複数リクエストの間に少し待機
+                        if i > 0 and i % 5 == 0:
+                            await asyncio.sleep(0.1)  # 100ms待機
+                            
+                        bukken = await self._make_request("GET", f"/crm/v3/objects/2-39155607/{bukken_id}")
+                        associations["2-39155607"].append(bukken)
+                        logger.debug(f"Successfully retrieved bukken {bukken_id}")
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 429:  # レート制限
+                            logger.warning(f"Rate limit hit for bukken {bukken_id}, waiting...")
+                            await asyncio.sleep(1.0)  # 1秒待機してリトライ
+                            try:
+                                bukken = await self._make_request("GET", f"/crm/v3/objects/2-39155607/{bukken_id}")
+                                associations["2-39155607"].append(bukken)
+                            except Exception as retry_e:
+                                logger.warning(f"Failed to get bukken {bukken_id} after retry: {str(retry_e)}")
+                        else:
+                            logger.warning(f"Failed to get bukken {bukken_id}: {e.response.status_code} - {e.response.text}")
+                    except Exception as e:
+                        logger.warning(f"Failed to get bukken {bukken_id}: {str(e)}")
+                        continue
+                        
+            except Exception as e:
+                logger.warning(f"Failed to get bukken associations for deal {deal_id}: {str(e)}")
                 
         except Exception as e:
             logger.error(f"Failed to get associations for deal {deal_id}: {str(e)}")
         
-        logger.info(f"Associations summary for deal {deal_id}: {len(associations['companies'])} companies, {len(associations['contacts'])} contacts")
+        logger.info(f"Associations summary for deal {deal_id}: {len(associations['companies'])} companies, {len(associations['contacts'])} contacts, {len(associations['2-39155607'])} bukken")
         return associations
     
     async def create_deal(self, deal_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -283,11 +322,15 @@ class HubSpotDealsClient(HubSpotBaseClient):
             logger.error(f"Failed to search deals: {str(e)}")
             return []
 
-    async def search_deals_with_associations(self, search_criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def search_deals_with_associations(self, search_criteria: Dict[str, Any]) -> Dict[str, Any]:
         """取引を検索（関連会社・コンタクト情報も含む）"""
         try:
             # 基本的な検索を実行
-            deals = await self.search_deals(search_criteria)
+            search_result = await self.search_deals(search_criteria)
+            
+            # search_resultは辞書形式 {"results": [...], "paging": {...}}
+            deals = search_result.get("results", [])
+            paging = search_result.get("paging", {})
             
             # 各取引に関連情報を追加
             deals_with_associations = []
@@ -302,13 +345,17 @@ class HubSpotDealsClient(HubSpotBaseClient):
                 except Exception as e:
                     logger.warning(f"Failed to get associations for deal {deal.get('id')}: {str(e)}")
                     # 関連情報の取得に失敗しても取引情報は含める
-                    deal["associations"] = {"companies": [], "contacts": []}
+                    deal["associations"] = {"companies": [], "contacts": [], "2-39155607": []}
                     deals_with_associations.append(deal)
             
-            return deals_with_associations
+            # 元の形式と同じように辞書で返す
+            return {
+                "results": deals_with_associations,
+                "paging": paging
+            }
         except Exception as e:
             logger.error(f"Failed to search deals with associations: {str(e)}")
-            return []
+            return {"results": [], "paging": {}}
     
     async def get_pipelines(self) -> List[Dict[str, Any]]:
         """パイプライン一覧を取得"""
