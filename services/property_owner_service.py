@@ -192,3 +192,4 @@ class PropertyOwnerService:
             updated_at=data['updated_at']
         )
 
+
