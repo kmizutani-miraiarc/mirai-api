@@ -68,3 +68,4 @@ class PropertyOwnerListResponse(BaseModel):
     offset: int = Field(..., description="オフセット")
 
 
+
