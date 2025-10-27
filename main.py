@@ -18,6 +18,7 @@ from database.api_keys import api_key_manager
 from processors import DocumentProcessor, AIProcessor
 from routers.profit_management import router as profit_management_router
 from routers.property_owner import router as property_owner_router
+from routers.slack import router as slack_router
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +95,7 @@ app.add_middleware(
 # ルーターを追加
 app.include_router(profit_management_router)
 app.include_router(property_owner_router)
+app.include_router(slack_router)
 
 # レスポンス用のモデル
 class TestResponse(BaseModel):
