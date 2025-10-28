@@ -371,11 +371,6 @@ class DealSearchRequest(BaseModel):
         example="2024-12-31",
         description="作成日の終了日（YYYY-MM-DD形式）"
     )
-    include_associations: Optional[bool] = Field(
-        default=False,
-        example=False,
-        description="物件の関連付け情報を含めるかどうか（パフォーマンスに影響するため、必要な場合のみtrueに設定）"
-    )
 # HubSpotクライアントのインスタンス
 hubspot_owners_client = HubSpotOwnersClient()
 hubspot_contacts_client = HubSpotContactsClient()
@@ -1608,26 +1603,10 @@ async def search_hubspot_deals(search_criteria: DealSearchRequest, api_key: str 
         logger.info(f"Search criteria details - filterGroups: {search_data.get('filterGroups', [])}")
         logger.info(f"Search criteria details - properties: {search_data.get('properties', [])}")
         logger.info(f"Search criteria details - limit: {search_data.get('limit', 100)}")
-        logger.info(f"Search criteria details - include_associations: {search_data.get('include_associations', False)}")
         
-        # include_associationsパラメータに基づいて適切なメソッドを選択
-        include_associations = search_data.get('include_associations', False)
-        if include_associations:
-            logger.info("Using search_deals_with_associations for enhanced performance")
-            search_result = await hubspot_deals_client.search_deals_with_associations(search_data)
-        else:
-            logger.info("Using search_deals for better performance (no associations)")
-            search_result = await hubspot_deals_client.search_deals(search_data)
-        
-        # search_resultがリストの場合は空の結果として処理
-        if isinstance(search_result, list):
-            logger.warning("Search result is a list, treating as empty result")
-            results = []
-            paging = {}
-        else:
-            results = search_result.get("results", [])
-            paging = search_result.get("paging", {})
-            
+        search_result = await hubspot_deals_client.search_deals(search_data)
+        results = search_result.get("results", [])
+        paging = search_result.get("paging", {})
         logger.info(f"Deal search completed. Found {len(results)} results")
         
         return HubSpotResponse(
