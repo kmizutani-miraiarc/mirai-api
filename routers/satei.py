@@ -48,23 +48,67 @@ async def upload_satei_property(
         from hubspot.contacts import HubSpotContactsClient
         contacts_client = HubSpotContactsClient()
         
-        # メールアドレスでコンタクトを検索
+        # メールアドレスでコンタクトを検索（プロパティにhubspot_owner_idを含める）
         contacts_data = await contacts_client.get_contacts(limit=100)
         contacts = contacts_data.get("results", [])
         
         contact_info = None
         hubspot_owner_email = None
         
-        for contact in contacts:
-            properties = contact.get("properties", {})
-            if properties.get("email") == email:
+        logger.info(f"コンタクト検索: email={email}, contacts数={len(contacts)}")
+        
+        # 直接HubSpot APIでコンタクトを検索する（より確実に担当者情報を取得）
+        try:
+            # Search APIを使って直接検索
+            from hubspot.client import HubSpotBaseClient
+            client = HubSpotBaseClient()
+            
+            search_request = {
+                "filterGroups": [{
+                    "filters": [{
+                        "propertyName": "email",
+                        "operator": "EQ",
+                        "value": email
+                    }]
+                }],
+                "properties": ["email", "firstname", "lastname", "hubspot_owner_id"],
+                "limit": 1
+            }
+            
+            search_result = await client._make_request("POST", "/crm/v3/objects/contacts/search", json=search_request)
+            search_contacts = search_result.get("results", [])
+            
+            if search_contacts:
+                contact = search_contacts[0]
+                properties = contact.get("properties", {})
+                
                 contact_info = {
                     "contact_id": contact.get("id"),
-                    "name": (properties.get("firstname", "") + " " + properties.get("lastname", "")).strip() or None,
+                    "name": (properties.get("lastname", "") + " " + properties.get("firstname", "")).strip() or None,
                     "owner_id": properties.get("hubspot_owner_id"),
-                    "owner_name": properties.get("hs_analytics_first_visit_url")
+                    "owner_name": None
                 }
-                break
+                logger.info(f"Search APIでコンタクト情報: {contact_info}")
+            else:
+                logger.warning(f"Search APIでコンタクトが見つかりません: {email}")
+                
+        except Exception as e:
+            logger.error(f"Search API呼び出しエラー: {str(e)}")
+            # Fallback: 従来の方法で検索
+            for contact in contacts:
+                properties = contact.get("properties", {})
+                contact_email = properties.get("email")
+                logger.info(f"コンタクト確認: {contact_email}")
+                
+                if contact_email == email:
+                    contact_info = {
+                        "contact_id": contact.get("id"),
+                        "name": (properties.get("lastname", "") + " " + properties.get("firstname", "")).strip() or None,
+                        "owner_id": properties.get("hubspot_owner_id"),
+                        "owner_name": properties.get("hs_analytics_first_visit_url")
+                    }
+                    logger.info(f"従来方法でコンタクト情報: {contact_info}")
+                    break
         
         # HubSpot担当者のメールアドレスを取得
         if contact_info and contact_info.get("owner_id"):
@@ -72,23 +116,34 @@ async def upload_satei_property(
             owners_client = HubSpotOwnersClient()
             owners = await owners_client.get_owners()
             
+            logger.info(f"HubSpot担当者取得: owner_id={contact_info.get('owner_id')}, owners数={len(owners)}")
+            
             for owner in owners:
                 if str(owner.get("id")) == str(contact_info.get("owner_id")):
                     hubspot_owner_email = owner.get("email")
+                    logger.info(f"HubSpot担当者メールアドレス: {hubspot_owner_email}")
                     break
         
         # usersテーブルから担当者を検索
         owner_user_id = None
         if hubspot_owner_email:
-            async with db_connection.get_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute("""
-                        SELECT id FROM users WHERE email = %s
-                    """, (hubspot_owner_email,))
-                    
-                    result = await cursor.fetchone()
-                    if result:
-                        owner_user_id = result[0]
+            try:
+                async with db_connection.get_connection() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute("""
+                            SELECT id FROM users WHERE email = %s
+                        """, (hubspot_owner_email,))
+                        
+                        result = await cursor.fetchone()
+                        if result:
+                            owner_user_id = result[0]
+                            logger.info(f"担当者ユーザーID: {owner_user_id}")
+                        else:
+                            logger.warning(f"usersテーブルに該当する担当者が見つかりません: {hubspot_owner_email}")
+            except Exception as e:
+                logger.error(f"担当者検索エラー: {str(e)}")
+        
+        logger.info(f"最終的な担当者ID: {owner_user_id}")
         
         # ユニークIDを生成
         unique_id = str(uuid.uuid4())
@@ -250,6 +305,13 @@ async def get_satei_properties(
                 
                 # 各物件のファイルと担当者情報を取得
                 for prop in properties_dict:
+                    # 名前の順序を修正（既存データが「名 姓」形式の場合、「姓 名」に変換）
+                    if prop.get('user_name'):
+                        name_parts = prop['user_name'].strip().split()
+                        if len(name_parts) >= 2:
+                            # 「名 姓」形式を「姓 名」に変換
+                            prop['user_name'] = f"{name_parts[1]} {name_parts[0]}"
+                        # 1つの場合はそのまま
                     # ファイルを取得
                     await cursor.execute("""
                         SELECT * FROM upload_files
@@ -312,6 +374,13 @@ async def get_satei_property(
                 # カラム名を取得
                 columns = [desc[0] for desc in cursor.description]
                 property_dict = dict(zip(columns, result))
+                
+                # 名前の順序を修正（既存データが「名 姓」形式の場合、「姓 名」に変換）
+                if property_dict.get('user_name'):
+                    name_parts = property_dict['user_name'].strip().split()
+                    if len(name_parts) >= 2:
+                        # 「名 姓」形式を「姓 名」に変換
+                        property_dict['user_name'] = f"{name_parts[1]} {name_parts[0]}"
                 
                 # ファイルを取得
                 await cursor.execute("""

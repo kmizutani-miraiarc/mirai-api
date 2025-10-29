@@ -357,3 +357,4 @@ tail -f /var/log/mirai-api/error.log | grep -i "error\|exception\|failed"
 **バージョン**: 1.0.0  
 **作成者**: Mirai Development Team
 
+
