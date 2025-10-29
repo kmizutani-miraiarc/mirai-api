@@ -19,6 +19,7 @@ from processors import DocumentProcessor, AIProcessor
 from routers.profit_management import router as profit_management_router
 from routers.property_owner import router as property_owner_router
 from routers.slack import router as slack_router
+from routers.satei import router as satei_router
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -96,6 +97,7 @@ app.add_middleware(
 app.include_router(profit_management_router)
 app.include_router(property_owner_router)
 app.include_router(slack_router)
+app.include_router(satei_router)
 
 # レスポンス用のモデル
 class TestResponse(BaseModel):

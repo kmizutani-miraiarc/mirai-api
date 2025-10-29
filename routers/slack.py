@@ -80,3 +80,4 @@ async def send_slack_message(
             detail=f"予期しないエラーが発生しました: {str(e)}"
         )
 
+
