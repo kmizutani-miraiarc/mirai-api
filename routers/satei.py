@@ -271,6 +271,7 @@ async def get_satei_properties(
     limit: int = 100,
     offset: int = 0,
     status: Optional[str] = None,
+    owner_user_id: Optional[int] = None,
     api_key: dict = Depends(verify_api_key)
 ):
     """査定物件一覧を取得"""
@@ -278,12 +279,20 @@ async def get_satei_properties(
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
                 # WHERE句を構築
-                where_clause = ""
+                where_conditions = []
                 params = []
                 
                 if status:
-                    where_clause = "WHERE sp.status = %s"
+                    where_conditions.append("sp.status = %s")
                     params.append(status)
+                
+                if owner_user_id is not None:
+                    where_conditions.append("sp.owner_user_id = %s")
+                    params.append(owner_user_id)
+                
+                where_clause = ""
+                if where_conditions:
+                    where_clause = "WHERE " + " AND ".join(where_conditions)
                 
                 query = f"""
                     SELECT sp.*, su.email, su.name as user_name, su.unique_id
