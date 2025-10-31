@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from typing import Optional
 from database.api_keys import api_key_manager
+from config.slack import get_slack_config
 
 router = APIRouter(prefix="/slack", tags=["slack"])
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/slack", tags=["slack"])
 class SlackMessageRequest(BaseModel):
     """Slack通知リクエストモデル"""
     message: dict = Field(..., description="送信するメッセージ（Slackフォーマット）")
-    webhook_url: str = Field(..., description="送信先チャンネルのWebhook URL")
+    user_email: str = Field(..., description="ユーザーのメールアドレス（Webhook URLを取得するために使用）")
 
 
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
@@ -45,17 +46,28 @@ async def send_slack_message(
     Slackにメッセージを送信
     
     Args:
-        request: Slack通知リクエスト
+        request: Slack通知リクエスト（メッセージとユーザーメールアドレス）
         api_key: APIキー認証
     
     Returns:
         送信結果
     """
     try:
+        # メールアドレスからSlack設定を取得
+        slack_config = get_slack_config(request.user_email)
+        webhook_url = slack_config['webhook_url']
+        
+        # messageオブジェクトが辞書の場合、そのまま使用
+        # text形式の場合、辞書に変換
+        if isinstance(request.message, str):
+            payload = {"text": request.message}
+        else:
+            payload = request.message
+        
         # Slack Webhookにメッセージを送信
         response = requests.post(
-            request.webhook_url,
-            json=request.message,
+            webhook_url,
+            json=payload,
             timeout=10
         )
         
@@ -79,4 +91,6 @@ async def send_slack_message(
             status_code=500,
             detail=f"予期しないエラーが発生しました: {str(e)}"
         )
+
+
 

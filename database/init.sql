@@ -40,3 +40,34 @@ DESCRIBE api_keys;
 
 -- サンプルデータの確認
 SELECT * FROM api_keys;
+
+-- 査定物件ユーザー情報テーブル
+CREATE TABLE IF NOT EXISTS satei_users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    unique_id VARCHAR(255) NOT NULL UNIQUE COMMENT 'ユニークID',
+    email VARCHAR(255) NOT NULL COMMENT 'メールアドレス',
+    contact_id VARCHAR(255) COMMENT 'HubSpotコンタクトID',
+    name VARCHAR(255) COMMENT '名前',
+    owner_id VARCHAR(255) COMMENT '担当者ID（HubSpot Owner ID）',
+    owner_name VARCHAR(255) COMMENT '担当者名',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    INDEX idx_unique_id (unique_id),
+    INDEX idx_email (email),
+    INDEX idx_contact_id (contact_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='査定物件ユーザー情報テーブル';
+
+-- 査定物件テーブル
+CREATE TABLE IF NOT EXISTS satei_properties (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL COMMENT '査定物件ユーザー情報ID（外部キー）',
+    file_name VARCHAR(255) NOT NULL COMMENT 'ファイル名',
+    file_path VARCHAR(500) NOT NULL COMMENT 'ファイルパス',
+    file_size INT COMMENT 'ファイルサイズ（バイト）',
+    mime_type VARCHAR(100) COMMENT 'MIMEタイプ',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    FOREIGN KEY (user_id) REFERENCES satei_users(id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='査定物件テーブル';
