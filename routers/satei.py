@@ -4,6 +4,7 @@ from typing import Optional, List
 import logging
 import uuid
 import os
+import requests
 from datetime import datetime, date
 from database.connection import db_connection
 
@@ -208,6 +209,32 @@ async def upload_satei_property(
                 
                 await conn.commit()
         
+        # コンタクト担当者にSlack通知を送信
+        if hubspot_owner_email:
+            try:
+                from config.slack import get_slack_config
+                slack_config = get_slack_config(hubspot_owner_email)
+                
+                # メンション付きメッセージを構築
+                if slack_config['mention'] == 'here':
+                    message = {'text': '<!here> 査定依頼がありました'}
+                else:
+                    message = {'text': f"<@{slack_config['mention']}> 査定依頼がありました"}
+                
+                # Slackに送信
+                response = requests.post(
+                    slack_config['webhook_url'],
+                    json=message,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"担当者({hubspot_owner_email})にSlack通知を送信しました")
+                else:
+                    logger.error(f"Slack通知送信失敗: status_code={response.status_code}")
+            except Exception as slack_error:
+                logger.error(f"Slack通知エラー: {str(slack_error)}")
+        
         return {
             "status": "success",
             "message": "査定物件を正常に登録しました",
@@ -314,13 +341,6 @@ async def get_satei_properties(
                 
                 # 各物件のファイルと担当者情報を取得
                 for prop in properties_dict:
-                    # 名前の順序を修正（既存データが「名 姓」形式の場合、「姓 名」に変換）
-                    if prop.get('user_name'):
-                        name_parts = prop['user_name'].strip().split()
-                        if len(name_parts) >= 2:
-                            # 「名 姓」形式を「姓 名」に変換
-                            prop['user_name'] = f"{name_parts[1]} {name_parts[0]}"
-                        # 1つの場合はそのまま
                     # ファイルを取得
                     await cursor.execute("""
                         SELECT * FROM upload_files
@@ -383,13 +403,6 @@ async def get_satei_property(
                 # カラム名を取得
                 columns = [desc[0] for desc in cursor.description]
                 property_dict = dict(zip(columns, result))
-                
-                # 名前の順序を修正（既存データが「名 姓」形式の場合、「姓 名」に変換）
-                if property_dict.get('user_name'):
-                    name_parts = property_dict['user_name'].strip().split()
-                    if len(name_parts) >= 2:
-                        # 「名 姓」形式を「姓 名」に変換
-                        property_dict['user_name'] = f"{name_parts[1]} {name_parts[0]}"
                 
                 # ファイルを取得
                 await cursor.execute("""
