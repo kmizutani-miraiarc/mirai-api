@@ -2,38 +2,39 @@
 Slack通知設定
 メールアドレスとSlackの対応関係を管理
 """
+import os
 
 SLACK_CONFIG = {
     'k-mizutani@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_MIZUTANI',  # 環境変数名
         'mention': 'U07LY8DGGRJ'  # メンションするユーザーID
     },
     'kuze@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_KUZE',  # 環境変数名
         'mention': 'U05E3DUBB37'
     },
     'iwasaki@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_IWASAKI',  # 環境変数名
         'mention': 'U05HXCYF4BG'
     },
     'akase@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_AKASE',  # 環境変数名
         'mention': 'U05FNC60W2V'
     },
     'fujimori@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_FUJIMORI',  # 環境変数名
         'mention': 'U05E3DU12J1'
     },
     'y-suzuki@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_YSUZUKI',  # 環境変数名
         'mention': 'U086A7WTMKN'
     },
     'fujimura@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_FUJIMURA',  # 環境変数名
         'mention': 'U05RQNU7BFC'
     },
     'ma-immedio@miraiarc.jp': {
-        'webhook_url': 'https://hooks.slack.com/services/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',  # 通知先チャンネル
+        'webhook_url_env': 'SLACK_WEBHOOK_MA_IMMEDIO',  # 環境変数名
         'mention': 'here'
     }
 }
@@ -49,10 +50,19 @@ def get_slack_config(email: str) -> dict:
     Returns:
         Slack設定（webhook_urlとmentionを含む辞書）
     """
-    # 直接指定されている場合
-    if email in SLACK_CONFIG:
-        return SLACK_CONFIG[email]
+    # 設定を取得
+    config = SLACK_CONFIG.get(email, SLACK_CONFIG['ma-immedio@miraiarc.jp'])
     
-    # 担当者なしの場合のデフォルト設定
-    return SLACK_CONFIG['ma-immedio@miraiarc.jp']
+    # 環境変数からwebhook URLを取得
+    webhook_url_env = config['webhook_url_env']
+    webhook_url = os.getenv(webhook_url_env)
+    
+    if not webhook_url:
+        raise ValueError(f"環境変数 {webhook_url_env} が設定されていません")
+    
+    return {
+        'webhook_url': webhook_url,
+        'mention': config['mention']
+    }
+
 

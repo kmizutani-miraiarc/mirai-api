@@ -71,3 +71,4 @@ class PropertyOwnerListResponse(BaseModel):
 
 
 
+
