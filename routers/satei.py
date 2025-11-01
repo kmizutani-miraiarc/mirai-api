@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field
 from typing import Optional, List
 import logging
@@ -414,6 +414,17 @@ async def get_satei_property(
                 files = await cursor.fetchall()
                 files_columns = [desc[0] for desc in cursor.description]
                 property_dict['files'] = [dict(zip(files_columns, f)) for f in files]
+                
+                # 担当者情報を取得
+                if property_dict.get('owner_user_id'):
+                    await cursor.execute("""
+                        SELECT id, name, email FROM users WHERE id = %s
+                    """, (property_dict['owner_user_id'],))
+                    
+                    owner_result = await cursor.fetchone()
+                    if owner_result:
+                        owner_columns = ['id', 'name', 'email']
+                        property_dict['owner'] = dict(zip(owner_columns, owner_result))
         
         return {
             "status": "success",
@@ -431,10 +442,65 @@ async def get_satei_property(
         )
 
 
+class SateiPropertyUpdateRequest(BaseModel):
+    """査定物件更新リクエスト"""
+    property_name: Optional[str] = None
+    status: Optional[str] = None
+    estimated_price_from: Optional[float] = None
+    estimated_price_to: Optional[float] = None
+    comment: Optional[str] = None
+    evaluation_date: Optional[str] = None
+
+
+@router.get("/satei/files/{file_id}")
+async def get_satei_file(
+    file_id: int,
+    api_key: dict = Depends(verify_api_key)
+):
+    """査定物件のファイルを取得"""
+    try:
+        async with db_connection.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    SELECT file_path, file_name, mime_type FROM upload_files WHERE id = %s
+                """, (file_id,))
+                
+                result = await cursor.fetchone()
+                
+                if not result:
+                    raise HTTPException(status_code=404, detail="ファイルが見つかりません")
+                
+                file_path, file_name, mime_type = result
+                
+                # ファイルが存在するか確認
+                if not os.path.exists(file_path):
+                    raise HTTPException(status_code=404, detail="ファイルが見つかりません")
+                
+                # ファイルを読み込んで返す
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+                
+                return Response(
+                    content=file_content,
+                    media_type=mime_type or 'application/octet-stream',
+                    headers={
+                        "Content-Disposition": f"inline; filename={file_name}"
+                    }
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ファイル取得エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"ファイルの取得に失敗しました: {str(e)}"
+        )
+
+
 @router.put("/satei/properties/{property_id}")
 async def update_satei_property(
     property_id: int,
-    request: dict,
+    request: SateiPropertyUpdateRequest,
     api_key: dict = Depends(verify_api_key)
 ):
     """査定物件を更新"""
@@ -448,10 +514,11 @@ async def update_satei_property(
                 allowed_fields = ['property_name', 'status', 'estimated_price_from', 
                                 'estimated_price_to', 'comment', 'evaluation_date']
                 
+                request_dict = request.dict(exclude_unset=True)
                 for field in allowed_fields:
-                    if field in request:
+                    if field in request_dict:
                         update_fields.append(f"{field} = %s")
-                        update_values.append(request[field])
+                        update_values.append(request_dict[field])
                 
                 if not update_fields:
                     raise HTTPException(status_code=400, detail="更新する項目がありません")
