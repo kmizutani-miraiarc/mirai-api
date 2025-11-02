@@ -6,6 +6,7 @@ import uuid
 import os
 import requests
 from datetime import datetime, date
+from decimal import Decimal
 from database.connection import db_connection
 
 logger = logging.getLogger(__name__)
@@ -266,9 +267,13 @@ async def get_satei_users(
     try:
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
+                # ユーザー一覧と各ユーザーの査定物件数を取得
                 await cursor.execute("""
-                    SELECT * FROM satei_users
-                    ORDER BY created_at DESC
+                    SELECT su.*, COUNT(DISTINCT sp.id) as property_count
+                    FROM satei_users su
+                    LEFT JOIN satei_properties sp ON su.id = sp.user_id
+                    GROUP BY su.id
+                    ORDER BY su.created_at DESC
                     LIMIT %s OFFSET %s
                 """, (limit, offset))
                 
@@ -293,6 +298,73 @@ async def get_satei_users(
         )
 
 
+@router.delete("/satei/users/{user_id}")
+async def delete_satei_user(
+    user_id: int,
+    api_key: dict = Depends(verify_api_key)
+):
+    """査定物件ユーザーを削除"""
+    try:
+        async with db_connection.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # ユーザーが存在するか確認
+                await cursor.execute("""
+                    SELECT id FROM satei_users WHERE id = %s
+                """, (user_id,))
+                
+                user_result = await cursor.fetchone()
+                if not user_result:
+                    raise HTTPException(status_code=404, detail="指定されたユーザーが見つかりません")
+                
+                # 削除前に関連ファイルを取得して物理削除
+                await cursor.execute("""
+                    SELECT uf.file_path 
+                    FROM upload_files uf
+                    JOIN satei_properties sp ON uf.entity_id = sp.id AND uf.entity_type = 'satei_property'
+                    WHERE sp.user_id = %s
+                """, (user_id,))
+                
+                files_to_delete = await cursor.fetchall()
+                
+                # ユーザーを削除（CASCADE により関連データも自動削除）
+                await cursor.execute("""
+                    DELETE FROM satei_users WHERE id = %s
+                """, (user_id,))
+                
+                await conn.commit()
+                
+                # 物理ファイルを削除
+                deleted_files = 0
+                for file_info in files_to_delete:
+                    file_path = file_info[0]
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            deleted_files += 1
+                            logger.info(f"ファイルを削除しました: {file_path}")
+                    except Exception as file_error:
+                        logger.error(f"ファイル削除エラー: {file_path}, {str(file_error)}")
+                
+                logger.info(f"ユーザー {user_id} を削除しました（物理ファイル削除数: {deleted_files}）")
+        
+        return {
+            "status": "success",
+            "message": "査定物件ユーザーを正常に削除しました",
+            "data": {
+                "user_id": user_id,
+                "deleted_files_count": deleted_files
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"査定物件ユーザー削除エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"査定物件ユーザーの削除に失敗しました: {str(e)}"
+        )
+
+
 @router.get("/satei/properties")
 async def get_satei_properties(
     limit: int = 100,
@@ -314,12 +386,26 @@ async def get_satei_properties(
                     params.append(status)
                 
                 if owner_user_id is not None:
-                    where_conditions.append("sp.owner_user_id = %s")
-                    params.append(owner_user_id)
+                    if owner_user_id == -1:
+                        where_conditions.append("sp.owner_user_id IS NULL")
+                    else:
+                        where_conditions.append("sp.owner_user_id = %s")
+                        params.append(owner_user_id)
                 
                 where_clause = ""
                 if where_conditions:
                     where_clause = "WHERE " + " AND ".join(where_conditions)
+                
+                # 総件数を取得
+                count_query = f"""
+                    SELECT COUNT(*) as total
+                    FROM satei_properties sp
+                    JOIN satei_users su ON sp.user_id = su.id
+                    {where_clause}
+                """
+                await cursor.execute(count_query, tuple(params))
+                total_result = await cursor.fetchone()
+                total = total_result[0] if total_result else 0
                 
                 query = f"""
                     SELECT sp.*, su.email, su.name as user_name, su.unique_id
@@ -341,6 +427,11 @@ async def get_satei_properties(
                 
                 # 各物件のファイルと担当者情報を取得
                 for prop in properties_dict:
+                    # Decimal型をfloatに変換
+                    if prop.get('estimated_price_from') is not None and isinstance(prop['estimated_price_from'], Decimal):
+                        prop['estimated_price_from'] = float(prop['estimated_price_from'])
+                    if prop.get('estimated_price_to') is not None and isinstance(prop['estimated_price_to'], Decimal):
+                        prop['estimated_price_to'] = float(prop['estimated_price_to'])
                     # ファイルを取得
                     await cursor.execute("""
                         SELECT * FROM upload_files
@@ -367,7 +458,7 @@ async def get_satei_properties(
             "status": "success",
             "data": {
                 "properties": properties_dict,
-                "total": len(properties_dict)
+                "total": total
             }
         }
     except Exception as e:
@@ -403,6 +494,12 @@ async def get_satei_property(
                 # カラム名を取得
                 columns = [desc[0] for desc in cursor.description]
                 property_dict = dict(zip(columns, result))
+                
+                # Decimal型をfloatに変換
+                if property_dict.get('estimated_price_from') is not None and isinstance(property_dict['estimated_price_from'], Decimal):
+                    property_dict['estimated_price_from'] = float(property_dict['estimated_price_from'])
+                if property_dict.get('estimated_price_to') is not None and isinstance(property_dict['estimated_price_to'], Decimal):
+                    property_dict['estimated_price_to'] = float(property_dict['estimated_price_to'])
                 
                 # ファイルを取得
                 await cursor.execute("""
@@ -546,4 +643,75 @@ async def update_satei_property(
         raise HTTPException(
             status_code=500,
             detail=f"査定物件の更新に失敗しました: {str(e)}"
+        )
+
+
+@router.delete("/satei/properties/{property_id}")
+async def delete_satei_property(
+    property_id: int,
+    api_key: dict = Depends(verify_api_key)
+):
+    """査定物件を削除"""
+    try:
+        async with db_connection.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # 物件が存在するか確認
+                await cursor.execute("""
+                    SELECT id FROM satei_properties WHERE id = %s
+                """, (property_id,))
+                
+                property_result = await cursor.fetchone()
+                if not property_result:
+                    raise HTTPException(status_code=404, detail="指定された査定物件が見つかりません")
+                
+                # 削除前に関連ファイルを取得して物理削除
+                await cursor.execute("""
+                    SELECT file_path FROM upload_files
+                    WHERE entity_type = 'satei_property' AND entity_id = %s
+                """, (property_id,))
+                
+                files_to_delete = await cursor.fetchall()
+                
+                # 物件を削除（CASCADE により関連データも自動削除されることはないが、念のため）
+                await cursor.execute("""
+                    DELETE FROM satei_properties WHERE id = %s
+                """, (property_id,))
+                
+                # 関連ファイルを物理削除
+                await cursor.execute("""
+                    DELETE FROM upload_files 
+                    WHERE entity_type = 'satei_property' AND entity_id = %s
+                """, (property_id,))
+                
+                await conn.commit()
+                
+                # 物理ファイルを削除
+                deleted_files = 0
+                for file_info in files_to_delete:
+                    file_path = file_info[0]
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            deleted_files += 1
+                            logger.info(f"ファイルを削除しました: {file_path}")
+                    except Exception as file_error:
+                        logger.error(f"ファイル削除エラー: {file_path}, {str(file_error)}")
+                
+                logger.info(f"査定物件 {property_id} を削除しました（物理ファイル削除数: {deleted_files}）")
+        
+        return {
+            "status": "success",
+            "message": "査定物件を正常に削除しました",
+            "data": {
+                "property_id": property_id,
+                "deleted_files_count": deleted_files
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"査定物件削除エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"査定物件の削除に失敗しました: {str(e)}"
         )
