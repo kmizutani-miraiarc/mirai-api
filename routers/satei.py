@@ -641,6 +641,8 @@ class SateiPropertyUpdateRequest(BaseModel):
     estimated_price_to: Optional[float] = None
     comment: Optional[str] = None
     evaluation_date: Optional[str] = None
+    for_sale: Optional[bool] = None
+    no_buyout: Optional[bool] = None
 
 
 @router.get("/satei/files/{file_id}")
@@ -703,7 +705,8 @@ async def update_satei_property(
                 update_values = []
                 
                 allowed_fields = ['property_name', 'status', 'estimated_price_from', 
-                                'estimated_price_to', 'comment', 'evaluation_date']
+                                'estimated_price_to', 'comment', 'evaluation_date',
+                                'for_sale', 'no_buyout']
                 
                 request_dict = request.dict(exclude_unset=True)
                 for field in allowed_fields:
