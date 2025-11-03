@@ -353,6 +353,11 @@ async def get_user_properties_by_unique_id(
                         prop['estimated_price_from'] = float(prop['estimated_price_from'])
                     if prop.get('estimated_price_to') is not None and isinstance(prop['estimated_price_to'], Decimal):
                         prop['estimated_price_to'] = float(prop['estimated_price_to'])
+                    # Boolean型をboolに変換
+                    if prop.get('for_sale') is not None:
+                        prop['for_sale'] = bool(prop['for_sale'])
+                    if prop.get('no_buyout') is not None:
+                        prop['no_buyout'] = bool(prop['no_buyout'])
                     
                     # ファイルを取得
                     await cursor.execute("""
@@ -526,6 +531,11 @@ async def get_satei_properties(
                         prop['estimated_price_from'] = float(prop['estimated_price_from'])
                     if prop.get('estimated_price_to') is not None and isinstance(prop['estimated_price_to'], Decimal):
                         prop['estimated_price_to'] = float(prop['estimated_price_to'])
+                    # Boolean型をboolに変換
+                    if prop.get('for_sale') is not None:
+                        prop['for_sale'] = bool(prop['for_sale'])
+                    if prop.get('no_buyout') is not None:
+                        prop['no_buyout'] = bool(prop['no_buyout'])
                     # ファイルを取得
                     await cursor.execute("""
                         SELECT * FROM upload_files
@@ -594,6 +604,12 @@ async def get_satei_property(
                     property_dict['estimated_price_from'] = float(property_dict['estimated_price_from'])
                 if property_dict.get('estimated_price_to') is not None and isinstance(property_dict['estimated_price_to'], Decimal):
                     property_dict['estimated_price_to'] = float(property_dict['estimated_price_to'])
+                
+                # Boolean型をboolに変換
+                if property_dict.get('for_sale') is not None:
+                    property_dict['for_sale'] = bool(property_dict['for_sale'])
+                if property_dict.get('no_buyout') is not None:
+                    property_dict['no_buyout'] = bool(property_dict['no_buyout'])
                 
                 # ファイルを取得
                 await cursor.execute("""
@@ -708,7 +724,7 @@ async def update_satei_property(
                                 'estimated_price_to', 'comment', 'evaluation_date',
                                 'for_sale', 'no_buyout']
                 
-                request_dict = request.dict(exclude_unset=True)
+                request_dict = request.dict(exclude_unset=True, exclude_none=False)
                 for field in allowed_fields:
                     if field in request_dict:
                         update_fields.append(f"{field} = %s")
