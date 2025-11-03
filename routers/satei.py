@@ -311,6 +311,87 @@ async def get_satei_users(
         )
 
 
+@router.get("/satei/users/{unique_id}/properties")
+async def get_user_properties_by_unique_id(
+    unique_id: str,
+    api_key: dict = Depends(verify_api_key)
+):
+    """指定ユーザーの査定物件一覧を取得"""
+    try:
+        async with db_connection.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # ユーザーIDを取得
+                await cursor.execute("""
+                    SELECT id FROM satei_users WHERE unique_id = %s
+                """, (unique_id,))
+                
+                user_result = await cursor.fetchone()
+                if not user_result:
+                    raise HTTPException(status_code=404, detail="指定されたユーザーが見つかりません")
+                
+                user_id = user_result[0]
+                
+                # 査定物件を取得
+                await cursor.execute("""
+                    SELECT sp.*, su.email, su.name as user_name, su.unique_id
+                    FROM satei_properties sp
+                    JOIN satei_users su ON sp.user_id = su.id
+                    WHERE sp.user_id = %s
+                    ORDER BY sp.created_at DESC
+                """, (user_id,))
+                
+                properties = await cursor.fetchall()
+                
+                # カラム名を取得
+                columns = [desc[0] for desc in cursor.description]
+                properties_dict = [dict(zip(columns, prop)) for prop in properties]
+                
+                # 各物件のファイルと担当者情報を取得
+                for prop in properties_dict:
+                    # Decimal型をfloatに変換
+                    if prop.get('estimated_price_from') is not None and isinstance(prop['estimated_price_from'], Decimal):
+                        prop['estimated_price_from'] = float(prop['estimated_price_from'])
+                    if prop.get('estimated_price_to') is not None and isinstance(prop['estimated_price_to'], Decimal):
+                        prop['estimated_price_to'] = float(prop['estimated_price_to'])
+                    
+                    # ファイルを取得
+                    await cursor.execute("""
+                        SELECT * FROM upload_files
+                        WHERE entity_type = 'satei_property' AND entity_id = %s
+                        ORDER BY created_at ASC
+                    """, (prop['id'],))
+                    
+                    files = await cursor.fetchall()
+                    files_columns = [desc[0] for desc in cursor.description]
+                    prop['files'] = [dict(zip(files_columns, f)) for f in files]
+                    
+                    # 担当者情報を取得
+                    if prop.get('owner_user_id'):
+                        await cursor.execute("""
+                            SELECT id, name, email FROM users WHERE id = %s
+                        """, (prop['owner_user_id'],))
+                        
+                        owner_result = await cursor.fetchone()
+                        if owner_result:
+                            owner_columns = ['id', 'name', 'email']
+                            prop['owner'] = dict(zip(owner_columns, owner_result))
+        
+        return {
+            "status": "success",
+            "data": {
+                "properties": properties_dict
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"査定物件ユーザー別取得エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"査定物件の取得に失敗しました: {str(e)}"
+        )
+
+
 @router.delete("/satei/users/{user_id}")
 async def delete_satei_user(
     user_id: int,
