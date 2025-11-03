@@ -147,25 +147,38 @@ async def upload_satei_property(
         
         logger.info(f"最終的な担当者ID: {owner_user_id}")
         
-        # ユニークIDを生成
-        unique_id = str(uuid.uuid4())
-        
         # ユーザー情報を保存
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
+                # メールアドレスで既存ユーザーを検索
                 await cursor.execute("""
-                    INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (
-                    unique_id,
-                    email,
-                    contact_info.get("contact_id") if contact_info else None,
-                    contact_info.get("name") if contact_info else None,
-                    contact_info.get("owner_id") if contact_info else None,
-                    contact_info.get("owner_name") if contact_info else None
-                ))
+                    SELECT id, unique_id FROM satei_users WHERE email = %s
+                """, (email,))
                 
-                user_id = cursor.lastrowid
+                existing_user = await cursor.fetchone()
+                
+                if existing_user:
+                    # 既存ユーザーが見つかった場合はそのユーザーを使用
+                    user_id = existing_user[0]
+                    unique_id = existing_user[1]
+                    logger.info(f"既存ユーザーを使用: user_id={user_id}, unique_id={unique_id}, email={email}")
+                else:
+                    # 新規ユーザーの場合はユニークIDを生成して登録
+                    unique_id = str(uuid.uuid4())
+                    await cursor.execute("""
+                        INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        unique_id,
+                        email,
+                        contact_info.get("contact_id") if contact_info else None,
+                        contact_info.get("name") if contact_info else None,
+                        contact_info.get("owner_id") if contact_info else None,
+                        contact_info.get("owner_name") if contact_info else None
+                    ))
+                    
+                    user_id = cursor.lastrowid
+                    logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}")
                 
                 # 査定物件を作成（担当者を含む）
                 await cursor.execute("""
