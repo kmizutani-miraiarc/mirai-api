@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Response
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Response, Body, Header
 from pydantic import BaseModel, Field
 from typing import Optional, List
 import logging
@@ -9,29 +9,34 @@ import requests
 from datetime import datetime, date
 from decimal import Decimal
 from urllib.parse import unquote
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from database.connection import db_connection
+from database.api_keys import api_key_manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# リクエストモデル
-class SateiUploadRequest(BaseModel):
-    """査定物件アップロードリクエスト"""
-    email: str = Field(..., description="メールアドレス")
-    property_name: Optional[str] = Field(None, description="物件名")
-    files: List[str] = Field(..., description="アップロードされたファイル名のリスト")
-
-
 # API認証の依存関数
-async def verify_api_key(x_api_key: Optional[str] = Depends(lambda: None)):
-    """API認証キーを検証"""
-    # 簡易的な認証（必要に応じて実装）
+async def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    """API認証キーを検証（データベースベース）"""
     if not x_api_key:
-        # 認証なしでもOK
-        pass
-    return {"site_name": "mirai-base"}
-
+        raise HTTPException(
+            status_code=401, 
+            detail="API key is required. Please provide X-API-Key header."
+        )
+    
+    # データベースからAPIキーを検証
+    api_key_info = await api_key_manager.validate_api_key(x_api_key)
+    if not api_key_info:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid API key. Please check your X-API-Key header."
+        )
+    
+    return api_key_info
 
 @router.post("/satei/upload")
 async def upload_satei_property(
@@ -276,10 +281,13 @@ async def upload_satei_property(
                 await conn.commit()
         
         # コンタクト担当者にSlack通知を送信
+        logger.info(f"Slack通知チェック: hubspot_owner_email={hubspot_owner_email}")
         if hubspot_owner_email:
             try:
                 from config.slack import get_slack_config
+                logger.info(f"Slack設定を取得中: email={hubspot_owner_email}")
                 slack_config = get_slack_config(hubspot_owner_email)
+                logger.info(f"Slack設定取得成功: webhook_url={slack_config.get('webhook_url', 'N/A')[:50]}..., mention={slack_config.get('mention', 'N/A')}")
                 
                 # メンション付きメッセージを構築
                 if slack_config['mention'] == 'here':
@@ -287,6 +295,7 @@ async def upload_satei_property(
                 else:
                     message = {'text': f"<@{slack_config['mention']}> 査定依頼がありました"}
                 
+                logger.info(f"Slackメッセージ送信中: message={message}")
                 # Slackに送信
                 response = requests.post(
                     slack_config['webhook_url'],
@@ -294,12 +303,16 @@ async def upload_satei_property(
                     timeout=10
                 )
                 
+                logger.info(f"Slackレスポンス: status_code={response.status_code}, response_text={response.text[:200]}")
+                
                 if response.status_code == 200:
                     logger.info(f"担当者({hubspot_owner_email})にSlack通知を送信しました")
                 else:
-                    logger.error(f"Slack通知送信失敗: status_code={response.status_code}")
+                    logger.error(f"Slack通知送信失敗: status_code={response.status_code}, response_text={response.text}")
             except Exception as slack_error:
-                logger.error(f"Slack通知エラー: {str(slack_error)}")
+                logger.error(f"Slack通知エラー: {str(slack_error)}", exc_info=True)
+        else:
+            logger.warning(f"Slack通知をスキップ: hubspot_owner_emailがNoneです（担当者が見つからないか、取得に失敗しました）")
         
         return {
             "status": "success",
@@ -408,8 +421,7 @@ async def get_user_properties_by_unique_id(
                     # Boolean型をboolに変換
                     if prop.get('for_sale') is not None:
                         prop['for_sale'] = bool(prop['for_sale'])
-                    if prop.get('no_buyout') is not None:
-                        prop['no_buyout'] = bool(prop['no_buyout'])
+                    # evaluation_resultは文字列（ENUM）なのでそのまま使用
                     
                     # ファイルを取得
                     await cursor.execute("""
@@ -586,8 +598,7 @@ async def get_satei_properties(
                     # Boolean型をboolに変換
                     if prop.get('for_sale') is not None:
                         prop['for_sale'] = bool(prop['for_sale'])
-                    if prop.get('no_buyout') is not None:
-                        prop['no_buyout'] = bool(prop['no_buyout'])
+                    # evaluation_resultは文字列（ENUM）なのでそのまま使用
                     # ファイルを取得
                     await cursor.execute("""
                         SELECT * FROM upload_files
@@ -660,8 +671,7 @@ async def get_satei_property(
                 # Boolean型をboolに変換
                 if property_dict.get('for_sale') is not None:
                     property_dict['for_sale'] = bool(property_dict['for_sale'])
-                if property_dict.get('no_buyout') is not None:
-                    property_dict['no_buyout'] = bool(property_dict['no_buyout'])
+                # evaluation_resultは文字列（ENUM）なのでそのまま使用
                 
                 # ファイルを取得
                 await cursor.execute("""
@@ -710,7 +720,7 @@ class SateiPropertyUpdateRequest(BaseModel):
     comment: Optional[str] = None
     evaluation_date: Optional[str] = None
     for_sale: Optional[bool] = None
-    no_buyout: Optional[bool] = None
+    evaluation_result: Optional[str] = None
 
 
 @router.get("/satei/files/{file_id}")
@@ -774,7 +784,7 @@ async def update_satei_property(
                 
                 allowed_fields = ['property_name', 'status', 'estimated_price_from', 
                                 'estimated_price_to', 'comment', 'evaluation_date',
-                                'for_sale', 'no_buyout']
+                                'for_sale', 'evaluation_result']
                 
                 request_dict = request.dict(exclude_unset=True, exclude_none=False)
                 for field in allowed_fields:
@@ -879,4 +889,95 @@ async def delete_satei_property(
         raise HTTPException(
             status_code=500,
             detail=f"査定物件の削除に失敗しました: {str(e)}"
+        )
+
+
+@router.post("/satei/send-email")
+async def send_satei_email(
+    request: dict = Body(...),
+    api_key: dict = Depends(verify_api_key)
+):
+    """
+    査定物件完了通知メールを送信
+    
+    Args:
+        request: メール送信リクエスト（email, subject, body）
+        api_key: APIキー認証
+    
+    Returns:
+        送信結果
+    """
+    try:
+        email = request.get('email')
+        subject = request.get('subject')
+        body = request.get('body')
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="メールアドレスは必須です")
+        if not subject:
+            raise HTTPException(status_code=400, detail="メールタイトルは必須です")
+        if not body:
+            raise HTTPException(status_code=400, detail="メール本文は必須です")
+        
+        # SMTP設定を環境変数から取得
+        smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        smtp_user = os.getenv('SMTP_USER')
+        smtp_password = os.getenv('SMTP_PASSWORD')
+        smtp_from = os.getenv('SMTP_FROM', smtp_user)
+        
+        if not smtp_user or not smtp_password:
+            raise HTTPException(
+                status_code=500,
+                detail="SMTP設定が不完全です。環境変数SMTP_USERとSMTP_PASSWORDを設定してください"
+            )
+        
+        # メールメッセージを作成
+        msg = MIMEMultipart('alternative')
+        msg['From'] = smtp_from
+        msg['To'] = email
+        msg['Subject'] = subject
+        
+        # 本文を追加（HTML形式）
+        html_body = body.replace('\n', '<br>')
+        html_part = MIMEText(html_body, 'html', 'utf-8')
+        msg.attach(html_part)
+        
+        # テキスト形式も追加
+        text_part = MIMEText(body, 'plain', 'utf-8')
+        msg.attach(text_part)
+        
+        # SMTPサーバーに接続してメールを送信
+        try:
+            server = smtplib.SMTP(smtp_host, smtp_port)
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+            server.quit()
+            
+            logger.info(f"メール送信成功: {email}, 件名: {subject}")
+            
+            return {
+                "status": "success",
+                "message": "メールを送信しました"
+            }
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTPエラー: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"メール送信に失敗しました: {str(e)}"
+            )
+        except Exception as e:
+            logger.error(f"メール送信エラー: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"メール送信中にエラーが発生しました: {str(e)}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"メール送信処理エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"予期しないエラーが発生しました: {str(e)}"
         )
