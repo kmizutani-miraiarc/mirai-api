@@ -534,6 +534,7 @@ async def get_satei_properties(
     offset: int = 0,
     status: Optional[str] = None,
     owner_user_id: Optional[int] = None,
+    for_sale: Optional[bool] = None,
     api_key: dict = Depends(verify_api_key)
 ):
     """査定物件一覧を取得"""
@@ -554,6 +555,10 @@ async def get_satei_properties(
                     else:
                         where_conditions.append("sp.owner_user_id = %s")
                         params.append(owner_user_id)
+                
+                if for_sale is not None:
+                    where_conditions.append("sp.for_sale = %s")
+                    params.append(1 if for_sale else 0)
                 
                 where_clause = ""
                 if where_conditions:
