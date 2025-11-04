@@ -4,9 +4,11 @@ from typing import Optional, List
 import logging
 import uuid
 import os
+import re
 import requests
 from datetime import datetime, date
 from decimal import Decimal
+from urllib.parse import unquote
 from database.connection import db_connection
 
 logger = logging.getLogger(__name__)
@@ -194,8 +196,58 @@ async def upload_satei_property(
                 os.makedirs(upload_dir, exist_ok=True)
                 
                 for file in files:
-                    # ファイル名を生成
-                    new_filename = f"{unique_id}_{file.filename}"
+                    # ファイル名を適切にデコード（文字化け対策）
+                    original_filename = file.filename
+                    
+                    # Content-Dispositionヘッダーからファイル名を取得（より確実）
+                    if not original_filename:
+                        # Content-Dispositionヘッダーから直接取得を試みる
+                        content_disposition = file.headers.get("content-disposition", "")
+                        if content_disposition:
+                            # filename*=UTF-8''形式またはfilename="..."形式を検索
+                            filename_match = re.search(r'filename\*=UTF-8\'\'([^;]+)', content_disposition)
+                            if not filename_match:
+                                filename_match = re.search(r'filename="([^"]+)"', content_disposition)
+                            if not filename_match:
+                                filename_match = re.search(r'filename=([^;]+)', content_disposition)
+                            if filename_match:
+                                original_filename = filename_match.group(1)
+                    
+                    if original_filename:
+                        # 文字化け修復を試みる
+                        decoded_filename = original_filename
+                        try:
+                            # まず、RFC 2231形式（UTF-8''）でエンコードされている場合のデコード
+                            decoded_filename = unquote(original_filename, encoding='utf-8')
+                        except Exception:
+                            try:
+                                # 通常のURLエンコードの場合
+                                decoded_filename = unquote(original_filename)
+                            except Exception:
+                                pass
+                        
+                        # 文字化けしたファイル名を修復（Latin-1として解釈されたUTF-8を修復）
+                        try:
+                            # Latin-1/Windows-1252として解釈されたUTF-8バイト列を修復
+                            if decoded_filename and any(ord(c) > 127 for c in decoded_filename):
+                                # 文字化けしている可能性がある場合、Latin-1でエンコードしてUTF-8でデコード
+                                try:
+                                    repaired = decoded_filename.encode('latin-1').decode('utf-8')
+                                    if repaired != decoded_filename:
+                                        logger.info(f"ファイル名を修復: {decoded_filename} -> {repaired}")
+                                        decoded_filename = repaired
+                                except (UnicodeEncodeError, UnicodeDecodeError):
+                                    # 修復に失敗した場合は元のファイル名を使用
+                                    pass
+                        except Exception as e:
+                            logger.warning(f"ファイル名修復エラー: {str(e)}, 元のファイル名を使用: {original_filename}")
+                    else:
+                        decoded_filename = "unknown_file"
+                    
+                    # ファイル名を生成（ファイルシステム用に安全なファイル名に変換）
+                    # ファイル名から危険な文字を除去
+                    safe_filename = re.sub(r'[<>:"/\\|?*]', '_', decoded_filename)
+                    new_filename = f"{unique_id}_{safe_filename}"
                     file_path = os.path.join(upload_dir, new_filename)
                     
                     # ファイルを保存
@@ -203,21 +255,21 @@ async def upload_satei_property(
                         file_content = await file.read()
                         f.write(file_content)
                     
-                    # アップロードファイルテーブルに保存
+                    # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
                     await cursor.execute("""
                         INSERT INTO upload_files (entity_type, entity_id, file_name, file_path, file_size, mime_type)
                         VALUES (%s, %s, %s, %s, %s, %s)
                     """, (
                         'satei_property',
                         satei_property_id,
-                        file.filename,
+                        decoded_filename,
                         file_path,
                         len(file_content),
                         file.content_type
                     ))
                     
                     saved_files.append({
-                        "original_name": file.filename,
+                        "original_name": decoded_filename,
                         "saved_path": file_path
                     })
                 
