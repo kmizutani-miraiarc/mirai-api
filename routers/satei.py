@@ -202,7 +202,7 @@ async def upload_satei_property(
                 
                 # ファイルを保存
                 saved_files = []
-                upload_dir = "data/satei_uploads"
+                upload_dir = "/var/www/mirai-api/data/satei_uploads"
                 os.makedirs(upload_dir, exist_ok=True)
                 
                 for file in files:
