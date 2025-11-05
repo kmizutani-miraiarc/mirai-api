@@ -345,7 +345,15 @@ class DealSearchRequest(BaseModel):
             "contract_date",
             "settlement_date",
             "bukken_created",
+            "deal_hold_date",
+            "deal_survey_review_date",
+            "research_purchase_price_date",
+            "deal_probability_a_date",
+            "deal_probability_b_date",
+            "deal_farewell_date",
+            "deal_lost_date",
             "introduction_datetime",
+            "deal_disclosure_date",
             "deal_non_applicable"
         ],
         example=[
