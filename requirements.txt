@@ -19,3 +19,7 @@ numpy==1.24.3
 google-generativeai==0.3.2
 # Google Vision API
 google-cloud-vision==3.4.4
+# Gmail API
+google-api-python-client==2.108.0
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.1.0

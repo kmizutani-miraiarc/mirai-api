@@ -9,11 +9,16 @@ import requests
 from datetime import datetime, date
 from decimal import Decimal
 from urllib.parse import unquote
-import smtplib
+import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from database.connection import db_connection
 from database.api_keys import api_key_manager
+from database.gmail_credentials import gmail_credentials_manager
 
 logger = logging.getLogger(__name__)
 
@@ -897,16 +902,56 @@ async def delete_satei_property(
         )
 
 
+async def get_gmail_service(user_id: int):
+    """
+    Gmail APIサービスを取得（ユーザーIDから認証情報を取得）
+    
+    Args:
+        user_id: ユーザーID
+    
+    Returns:
+        Gmail API service object, user_email
+    """
+    # データベースからユーザーのGmail認証情報を取得
+    credentials = await gmail_credentials_manager.get_credentials_by_user_id(user_id)
+    
+    if not credentials:
+        raise ValueError(
+            f"ユーザーID {user_id} のGmail認証情報が見つかりません。"
+            "Gmail認証情報を登録してください。"
+        )
+    
+    # OAuth2認証情報を作成
+    creds = Credentials(
+        token=None,
+        refresh_token=credentials['gmail_refresh_token'],
+        token_uri='https://oauth2.googleapis.com/token',
+        client_id=credentials['gmail_client_id'],
+        client_secret=credentials['gmail_client_secret']
+    )
+    
+    # トークンをリフレッシュ
+    creds.refresh(Request())
+    
+    # Gmail APIサービスを構築
+    service = build('gmail', 'v1', credentials=creds)
+    return service, credentials['email']
+
+
 @router.post("/satei/send-email")
 async def send_satei_email(
     request: dict = Body(...),
     api_key: dict = Depends(verify_api_key)
 ):
     """
-    査定物件完了通知メールを送信
+    査定物件完了通知メールを送信（Gmail API使用）
     
     Args:
-        request: メール送信リクエスト（email, subject, body）
+        request: メール送信リクエスト（email, subject, body, user_id）
+            - email: 送信先メールアドレス
+            - subject: メールタイトル
+            - body: メール本文
+            - user_id: ログインユーザーID（送信元メールアドレスを決定）
         api_key: APIキー認証
     
     Returns:
@@ -916,6 +961,7 @@ async def send_satei_email(
         email = request.get('email')
         subject = request.get('subject')
         body = request.get('body')
+        user_id = request.get('user_id')
         
         if not email:
             raise HTTPException(status_code=400, detail="メールアドレスは必須です")
@@ -923,25 +969,31 @@ async def send_satei_email(
             raise HTTPException(status_code=400, detail="メールタイトルは必須です")
         if not body:
             raise HTTPException(status_code=400, detail="メール本文は必須です")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="ユーザーIDは必須です")
         
-        # SMTP設定を環境変数から取得
-        smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
-        smtp_port = int(os.getenv('SMTP_PORT', '587'))
-        smtp_user = os.getenv('SMTP_USER')
-        smtp_password = os.getenv('SMTP_PASSWORD')
-        smtp_from = os.getenv('SMTP_FROM', smtp_user)
+        # Gmail APIサービスを取得（ログインユーザーの認証情報を使用）
+        try:
+            service, from_email = await get_gmail_service(user_id)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
         
-        if not smtp_user or not smtp_password:
-            raise HTTPException(
-                status_code=500,
-                detail="SMTP設定が不完全です。環境変数SMTP_USERとSMTP_PASSWORDを設定してください"
-            )
+        # BCCを追加（環境変数から取得）
+        bcc_address = os.getenv('GMAIL_BCC_ADDRESS', '').strip()
+        logger.info(f"BCC環境変数チェック: GMAIL_BCC_ADDRESS='{bcc_address}' (length: {len(bcc_address)})")
         
         # メールメッセージを作成
         msg = MIMEMultipart('alternative')
-        msg['From'] = smtp_from
+        msg['From'] = from_email
         msg['To'] = email
         msg['Subject'] = subject
+        
+        # BCCが設定されている場合は追加
+        if bcc_address:
+            # Gmail APIでは、BCCはToやCcと同様にヘッダーに追加する必要がある
+            # BCCヘッダーは実際の送信先には表示されないが、Gmail APIが処理する
+            msg['Bcc'] = bcc_address
+            logger.info(f"BCCアドレスを追加しました: {bcc_address}")
         
         # 本文を追加（HTML形式）
         html_body = body.replace('\n', '<br>')
@@ -952,28 +1004,33 @@ async def send_satei_email(
         text_part = MIMEText(body, 'plain', 'utf-8')
         msg.attach(text_part)
         
-        # SMTPサーバーに接続してメールを送信
+        # Base64エンコード
+        raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
+        
+        # Gmail APIでメールを送信
         try:
-            server = smtplib.SMTP(smtp_host, smtp_port)
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.send_message(msg)
-            server.quit()
+            message = {'raw': raw_message}
+            send_result = service.users().messages().send(
+                userId='me',
+                body=message
+            ).execute()
             
-            logger.info(f"メール送信成功: {email}, 件名: {subject}")
+            logger.info(f"Gmail APIでメール送信成功: {email}, 件名: {subject}, message_id: {send_result.get('id')}")
             
             return {
                 "status": "success",
                 "message": "メールを送信しました"
             }
-        except smtplib.SMTPException as e:
-            logger.error(f"SMTPエラー: {str(e)}")
+        except HttpError as e:
+            error_detail = e.error_details[0] if e.error_details else {}
+            error_message = error_detail.get('message', str(e))
+            logger.error(f"Gmail APIエラー: {error_message}")
             raise HTTPException(
                 status_code=500,
-                detail=f"メール送信に失敗しました: {str(e)}"
+                detail=f"メール送信に失敗しました: {error_message}"
             )
         except Exception as e:
-            logger.error(f"メール送信エラー: {str(e)}")
+            logger.error(f"メール送信エラー: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"メール送信中にエラーが発生しました: {str(e)}"
@@ -981,7 +1038,128 @@ async def send_satei_email(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"メール送信処理エラー: {str(e)}")
+        logger.error(f"メール送信処理エラー: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"予期しないエラーが発生しました: {str(e)}"
+        )
+
+
+@router.post("/gmail/credentials")
+async def save_gmail_credentials(
+    request: dict = Body(...),
+    api_key: dict = Depends(verify_api_key)
+):
+    """
+    Gmail認証情報を保存
+    
+    Args:
+        request: Gmail認証情報リクエスト
+            - user_id: ユーザーID
+            - email: メールアドレス
+            - gmail_client_id: Gmail Client ID
+            - gmail_client_secret: Gmail Client Secret
+            - gmail_refresh_token: Gmail Refresh Token
+        api_key: APIキー認証
+    
+    Returns:
+        保存結果
+    """
+    try:
+        user_id = request.get('user_id')
+        email = request.get('email')
+        gmail_client_id = request.get('gmail_client_id')
+        gmail_client_secret = request.get('gmail_client_secret')
+        gmail_refresh_token = request.get('gmail_refresh_token')
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="ユーザーIDは必須です")
+        if not email:
+            raise HTTPException(status_code=400, detail="メールアドレスは必須です")
+        if not gmail_client_id:
+            raise HTTPException(status_code=400, detail="Gmail Client IDは必須です")
+        if not gmail_client_secret:
+            raise HTTPException(status_code=400, detail="Gmail Client Secretは必須です")
+        if not gmail_refresh_token:
+            raise HTTPException(status_code=400, detail="Gmail Refresh Tokenは必須です")
+        
+        # Gmail認証情報を保存
+        success = await gmail_credentials_manager.save_credentials(
+            user_id=user_id,
+            email=email,
+            gmail_client_id=gmail_client_id,
+            gmail_client_secret=gmail_client_secret,
+            gmail_refresh_token=gmail_refresh_token
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Gmail認証情報を保存しました"
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Gmail認証情報の保存に失敗しました"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Gmail認証情報保存エラー: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"予期しないエラーが発生しました: {str(e)}"
+        )
+
+
+@router.get("/gmail/credentials/{user_id}")
+async def get_gmail_credentials(
+    user_id: int,
+    api_key: dict = Depends(verify_api_key)
+):
+    """
+    Gmail認証情報を取得
+    
+    Args:
+        user_id: ユーザーID
+        api_key: APIキー認証
+    
+    Returns:
+        Gmail認証情報（パスワード情報は含まない）
+    """
+    try:
+        credentials = await gmail_credentials_manager.get_credentials_by_user_id(user_id)
+        
+        if not credentials:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ユーザーID {user_id} のGmail認証情報が見つかりません"
+            )
+        
+        # セキュリティのため、機密情報は返さない
+        # データベースからcreated_atも取得
+        select_query_with_date = """
+        SELECT user_id, email, created_at
+        FROM user_gmail_credentials
+        WHERE user_id = %s
+        """
+        result = await db_connection.execute_query(select_query_with_date, (user_id,))
+        
+        return {
+            "status": "success",
+            "data": {
+                "user_id": credentials["user_id"],
+                "email": credentials["email"],
+                "created_at": result[0]["created_at"] if result and len(result) > 0 else None,
+                "has_credentials": True
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Gmail認証情報取得エラー: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"予期しないエラーが発生しました: {str(e)}"

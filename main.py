@@ -15,6 +15,7 @@ from hubspot.deal_histories import HubSpotDealHistoriesClient
 from hubspot.config import Config
 from database.connection import db_connection
 from database.api_keys import api_key_manager
+from database.gmail_credentials import gmail_credentials_manager
 from processors import DocumentProcessor, AIProcessor
 from routers.profit_management import router as profit_management_router
 from routers.property_owner import router as property_owner_router
@@ -69,6 +70,10 @@ async def startup_event():
         # APIキーテーブルを作成
         await api_key_manager.create_tables()
         logger.info("APIキーテーブルの初期化が完了しました")
+        
+        # Gmail認証情報テーブルを作成
+        await gmail_credentials_manager.create_tables()
+        logger.info("Gmail認証情報テーブルの初期化が完了しました")
         
     except Exception as e:
         logger.error(f"アプリケーション起動時にエラーが発生しました: {str(e)}")

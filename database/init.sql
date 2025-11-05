@@ -71,3 +71,18 @@ CREATE TABLE IF NOT EXISTS satei_properties (
     INDEX idx_user_id (user_id),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='査定物件テーブル';
+
+-- Gmail認証情報テーブル（ユーザーごとのGmail API認証情報を保存）
+CREATE TABLE IF NOT EXISTS user_gmail_credentials (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL COMMENT 'ユーザーID（usersテーブルへの外部キー）',
+    email VARCHAR(255) NOT NULL COMMENT 'メールアドレス',
+    gmail_client_id VARCHAR(500) NOT NULL COMMENT 'Gmail Client ID',
+    gmail_client_secret VARCHAR(500) NOT NULL COMMENT 'Gmail Client Secret',
+    gmail_refresh_token TEXT NOT NULL COMMENT 'Gmail Refresh Token',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_user_id (user_id),
+    INDEX idx_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Gmail認証情報テーブル';
