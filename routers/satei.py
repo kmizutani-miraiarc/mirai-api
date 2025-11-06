@@ -262,8 +262,8 @@ async def upload_satei_property(
                     
                     # ファイルを保存
                     with open(file_path, "wb") as f:
-                        file_content = await file.read()
-                        f.write(file_content)
+                        await file.seek(0)
+                        shutil.copyfileobj(file.file, f)
                     
                     # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
                     await cursor.execute("""
@@ -274,7 +274,7 @@ async def upload_satei_property(
                         satei_property_id,
                         decoded_filename,
                         file_path,
-                        len(file_content),
+                        os.path.getsize(file_path),
                         file.content_type
                     ))
                     
