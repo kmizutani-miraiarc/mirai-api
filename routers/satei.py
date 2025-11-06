@@ -7,6 +7,7 @@ import os
 import re
 import requests
 import traceback
+import shutil
 from datetime import datetime, date
 from decimal import Decimal
 from urllib.parse import unquote
@@ -162,6 +163,7 @@ async def upload_satei_property(
         
         # ユーザー情報を保存
         logger.info("データベース接続を開始します")
+        temp_files = []  # 一時ファイルのパスを保持（エラー時のクリーンアップ用、スコープを広げる）
         try:
             async with db_connection.get_connection() as conn:
                 logger.info("データベース接続が確立されました")
@@ -206,8 +208,25 @@ async def upload_satei_property(
                     
                     # ファイルを保存
                     saved_files = []
-                    # アップロードディレクトリを環境変数から取得（フォールバック付き）
+                    # temp_filesは外側のスコープで定義済み
+                    
+                    # 最終的なアップロードディレクトリを環境変数から取得（フォールバック付き）
                     upload_dir = os.getenv('SATEI_UPLOAD_DIR', '/tmp/satei_uploads')
+                    # 一時保存ディレクトリ（/tmp/以下）
+                    temp_dir = '/tmp/satei_uploads_temp'
+                    
+                    # 一時ディレクトリを作成
+                    try:
+                        os.makedirs(temp_dir, exist_ok=True)
+                        logger.info(f"一時ディレクトリを作成しました: {temp_dir}")
+                    except Exception as temp_dir_error:
+                        logger.error(f"一時ディレクトリの作成に失敗しました: {temp_dir}, エラー: {str(temp_dir_error)}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"一時ディレクトリの作成に失敗しました: {str(temp_dir_error)}"
+                        )
+                    
+                    # 最終的なアップロードディレクトリを確認（移動先）
                     try:
                         os.makedirs(upload_dir, exist_ok=True)
                         # ディレクトリの書き込み権限を確認
@@ -316,27 +335,32 @@ async def upload_satei_property(
                         # ファイル名から危険な文字を除去
                         safe_filename = re.sub(r'[<>:"/\\|?*]', '_', decoded_filename)
                         new_filename = f"{unique_id}_{safe_filename}"
-                        file_path = os.path.join(upload_dir, new_filename)
                         
-                        # ファイルを保存（既に読み込んだ内容を使用）
+                        # 一時ファイルパス（/tmp/以下）
+                        temp_file_path = os.path.join(temp_dir, new_filename)
+                        # 最終的なファイルパス（指定ディレクトリ）
+                        final_file_path = os.path.join(upload_dir, new_filename)
+                        
+                        # ファイルを一時ディレクトリに保存（既に読み込んだ内容を使用）
                         try:
-                            with open(file_path, "wb") as f:
+                            with open(temp_file_path, "wb") as f:
                                 f.write(file_content)
-                            logger.info(f"ファイルを保存しました: {file_path} ({len(file_content)} bytes)")
+                            logger.info(f"ファイルを一時保存しました: {temp_file_path} ({len(file_content)} bytes)")
+                            temp_files.append(temp_file_path)  # クリーンアップ用に記録
                         except PermissionError as perm_error:
-                            logger.error(f"ファイル保存権限エラー: {file_path}, エラー: {str(perm_error)}")
+                            logger.error(f"ファイル保存権限エラー: {temp_file_path}, エラー: {str(perm_error)}")
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"ファイルの保存に失敗しました（権限エラー）: {str(perm_error)}"
                             )
                         except OSError as os_error:
-                            logger.error(f"ファイル保存エラー: {file_path}, エラー: {str(os_error)}")
+                            logger.error(f"ファイル保存エラー: {temp_file_path}, エラー: {str(os_error)}")
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"ファイルの保存に失敗しました: {str(os_error)}"
                             )
                         
-                        # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
+                        # アップロードファイルテーブルに保存（最終的なパスを保存）
                         await cursor.execute("""
                             INSERT INTO upload_files (entity_type, entity_id, file_name, file_path, file_size, mime_type)
                             VALUES (%s, %s, %s, %s, %s, %s)
@@ -344,21 +368,68 @@ async def upload_satei_property(
                             'satei_property',
                             satei_property_id,
                             decoded_filename,
-                            file_path,
-                            os.path.getsize(file_path),
+                            final_file_path,  # 最終的なパスを保存
+                            len(file_content),  # ファイルサイズ（移動前でもサイズは同じ）
                             file.content_type
                         ))
                         
                         saved_files.append({
                             "original_name": decoded_filename,
-                            "saved_path": file_path
+                            "temp_path": temp_file_path,
+                            "final_path": final_file_path
                         })
-                
-                logger.info(f"データベースにコミットします: saved_files数={len(saved_files)}")
-                await conn.commit()
-                logger.info("データベースへのコミットが完了しました")
+                    
+                    # すべてのファイル処理が完了したら、一時ファイルを指定ディレクトリへ移動
+                    logger.info(f"一時ファイルを指定ディレクトリへ移動します: {len(saved_files)}件")
+                    moved_files = []
+                    for file_info in saved_files:
+                        temp_path = file_info["temp_path"]
+                        final_path = file_info["final_path"]
+                        try:
+                            # ファイルを移動（移動先に既に存在する場合は上書き）
+                            if os.path.exists(final_path):
+                                logger.warning(f"移動先に既にファイルが存在します: {final_path}。上書きします。")
+                                os.remove(final_path)
+                            
+                            # 移動（renameは同一ファイルシステム内でのみ動作、異なる場合はコピー+削除）
+                            try:
+                                os.rename(temp_path, final_path)
+                                logger.info(f"ファイルを移動しました: {temp_path} -> {final_path}")
+                            except OSError:
+                                # 異なるファイルシステムの場合はコピーしてから削除
+                                shutil.copy2(temp_path, final_path)
+                                os.remove(temp_path)
+                                logger.info(f"ファイルをコピーして移動しました: {temp_path} -> {final_path}")
+                            
+                            moved_files.append(final_path)
+                            # 移動済みなので一時ファイルリストから削除
+                            if temp_path in temp_files:
+                                temp_files.remove(temp_path)
+                        except Exception as move_error:
+                            logger.error(f"ファイルの移動に失敗しました: {temp_path} -> {final_path}, エラー: {str(move_error)}")
+                            # 移動に失敗した場合でも、データベースには保存済みなので続行
+                            # ただし、エラーをログに記録
+                            logger.warning(f"ファイル移動エラー: {final_path} は一時ディレクトリに残っています")
+                    
+                    logger.info(f"データベースにコミットします: saved_files数={len(saved_files)}")
+                    await conn.commit()
+                    logger.info("データベースへのコミットが完了しました")
+                    
+                    # 移動に失敗した一時ファイルがあれば警告
+                    if temp_files:
+                        logger.warning(f"移動に失敗した一時ファイルが残っています: {temp_files}")
         except Exception as db_error:
             logger.error(f"データベース処理中にエラーが発生しました: {str(db_error)}", exc_info=True)
+            # エラーが発生した場合、一時ファイルをクリーンアップ
+            if temp_files:
+                logger.info(f"エラー発生のため、一時ファイルをクリーンアップします: {len(temp_files)}件")
+                for temp_file in temp_files:
+                    try:
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                            logger.info(f"一時ファイルを削除しました: {temp_file}")
+                    except Exception as cleanup_error:
+                        logger.error(f"一時ファイルの削除に失敗しました: {temp_file}, エラー: {str(cleanup_error)}")
             raise
         
         # コンタクト担当者にSlack通知を送信
