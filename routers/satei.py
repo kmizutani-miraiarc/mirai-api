@@ -202,12 +202,66 @@ async def upload_satei_property(
                 
                 # ファイルを保存
                 saved_files = []
-                upload_dir = "/var/www/mirai-api/data/satei_uploads"
-                os.makedirs(upload_dir, exist_ok=True)
+                # アップロードディレクトリを環境変数から取得（フォールバック付き）
+                upload_dir = os.getenv('SATEI_UPLOAD_DIR', '/tmp/satei_uploads')
+                try:
+                    os.makedirs(upload_dir, exist_ok=True)
+                    # ディレクトリの書き込み権限を確認
+                    test_file = os.path.join(upload_dir, '.write_test')
+                    try:
+                        with open(test_file, 'w') as f:
+                            f.write('test')
+                        os.remove(test_file)
+                        logger.info(f"アップロードディレクトリの書き込み権限を確認しました: {upload_dir}")
+                    except Exception as write_test_error:
+                        logger.error(f"アップロードディレクトリに書き込み権限がありません: {upload_dir}, エラー: {str(write_test_error)}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"アップロードディレクトリに書き込み権限がありません: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
+                        )
+                except PermissionError as perm_error:
+                    logger.error(f"アップロードディレクトリの作成に失敗しました（権限エラー）: {upload_dir}, エラー: {str(perm_error)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(perm_error)}"
+                    )
+                except OSError as os_error:
+                    logger.error(f"アップロードディレクトリの作成に失敗しました: {upload_dir}, エラー: {str(os_error)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(os_error)}"
+                    )
+                
+                # ファイルサイズ制限（各ファイル最大50MB、合計最大200MB）
+                MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+                MAX_TOTAL_SIZE = 200 * 1024 * 1024  # 200MB
+                total_size = 0
                 
                 for file in files:
+                    # ファイルサイズをチェック（先に読み込んでサイズを確認）
+                    file_content = await file.read()
+                    file_size = len(file_content)
+                    total_size += file_size
+                    
+                    # 各ファイルのサイズチェック
+                    if file_size > MAX_FILE_SIZE:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"ファイル '{file.filename}' のサイズが大きすぎます（最大50MB）。現在のサイズ: {file_size / (1024 * 1024):.2f}MB"
+                        )
+                    
+                    # 合計サイズのチェック
+                    if total_size > MAX_TOTAL_SIZE:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"アップロードファイルの合計サイズが大きすぎます（最大200MB）。現在の合計サイズ: {total_size / (1024 * 1024):.2f}MB"
+                        )
+                    
                     # ファイル名を適切にデコード（文字化け対策）
                     original_filename = file.filename
+                    
+                    # ファイルポインタを先頭に戻す（後で保存するため）
+                    await file.seek(0)
                     
                     # Content-Dispositionヘッダーからファイル名を取得（より確実）
                     if not original_filename:
@@ -260,10 +314,23 @@ async def upload_satei_property(
                     new_filename = f"{unique_id}_{safe_filename}"
                     file_path = os.path.join(upload_dir, new_filename)
                     
-                    # ファイルを保存
-                    with open(file_path, "wb") as f:
-                        await file.seek(0)
-                        shutil.copyfileobj(file.file, f)
+                    # ファイルを保存（既に読み込んだ内容を使用）
+                    try:
+                        with open(file_path, "wb") as f:
+                            f.write(file_content)
+                        logger.info(f"ファイルを保存しました: {file_path} ({len(file_content)} bytes)")
+                    except PermissionError as perm_error:
+                        logger.error(f"ファイル保存権限エラー: {file_path}, エラー: {str(perm_error)}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"ファイルの保存に失敗しました（権限エラー）: {str(perm_error)}"
+                        )
+                    except OSError as os_error:
+                        logger.error(f"ファイル保存エラー: {file_path}, エラー: {str(os_error)}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"ファイルの保存に失敗しました: {str(os_error)}"
+                        )
                     
                     # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
                     await cursor.execute("""
