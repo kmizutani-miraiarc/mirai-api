@@ -86,3 +86,22 @@ CREATE TABLE IF NOT EXISTS user_gmail_credentials (
     UNIQUE KEY uk_user_id (user_id),
     INDEX idx_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Gmail認証情報テーブル';
+
+-- 配配メールログテーブル
+CREATE TABLE IF NOT EXISTS haihai_click_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL COMMENT 'メールアドレス',
+    mail_type VARCHAR(50) NOT NULL COMMENT 'メール種別',
+    mail_id VARCHAR(255) NOT NULL COMMENT 'メールID',
+    subject VARCHAR(255) NOT NULL COMMENT '件名',
+    click_date DATETIME NOT NULL COMMENT 'クリック日時',
+    url TEXT NOT NULL COMMENT 'URL',
+    hubspot_contact_id VARCHAR(255) DEFAULT NULL COMMENT 'HubSpot連絡先ID',
+    hubspot_owner_email VARCHAR(255) DEFAULT NULL COMMENT 'HubSpot担当者メールアドレス',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    INDEX idx_email (email),
+    INDEX idx_click_date (click_date),
+    INDEX idx_mail_id (mail_id),
+    INDEX idx_hubspot_contact_id (hubspot_contact_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='配配メールログテーブル';

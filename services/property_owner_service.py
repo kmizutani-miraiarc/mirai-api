@@ -117,6 +117,15 @@ class PropertyOwnerService:
         """物件担当者レコードを検索"""
         async with self.db_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # デバッグ: データベース名とテーブル存在確認
+                try:
+                    await cursor.execute("SELECT DATABASE() as current_db")
+                    db_result = await cursor.fetchone()
+                    current_db = db_result.get('current_db') if db_result else 'unknown'
+                    logger.info(f"[property_owners] 現在のデータベース: {current_db}")
+                except Exception as e:
+                    logger.error(f"[property_owners] データベース名取得エラー: {str(e)}")
+                
                 # WHERE条件を構築
                 where_conditions = []
                 values = []
