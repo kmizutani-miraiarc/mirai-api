@@ -208,33 +208,33 @@ async def upload_satei_property(
                     saved_files = []
                     # アップロードディレクトリを環境変数から取得（フォールバック付き）
                     upload_dir = os.getenv('SATEI_UPLOAD_DIR', '/tmp/satei_uploads')
-                    try:
-                        os.makedirs(upload_dir, exist_ok=True)
-                        # ディレクトリの書き込み権限を確認
-                        test_file = os.path.join(upload_dir, '.write_test')
-                        try:
-                            with open(test_file, 'w') as f:
-                                f.write('test')
-                            os.remove(test_file)
-                            logger.info(f"1アップロードディレクトリの書き込み権限を確認しました: {upload_dir}")
-                        except Exception as write_test_error:
-                            logger.error(f"2アップロードディレクトリに書き込み権限がありません: {upload_dir}, エラー: {str(write_test_error)}")
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"3アップロードディレクトリに書き込み権限がありません: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
-                            )
-                    except PermissionError as perm_error:
-                        logger.error(f"4アップロードディレクトリの作成に失敗しました（権限エラー）: {upload_dir}, エラー: {str(perm_error)}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"5アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(perm_error)}"
-                        )
-                    except OSError as os_error:
-                        logger.error(f"6アップロードディレクトリの作成に失敗しました: {upload_dir}, エラー: {str(os_error)}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"7アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(os_error)}"
-                        )
+                    #try:
+                    #    os.makedirs(upload_dir, exist_ok=True)
+                    #    # ディレクトリの書き込み権限を確認
+                    #    test_file = os.path.join(upload_dir, '.write_test')
+                    #    try:
+                    #        with open(test_file, 'w') as f:
+                    #            f.write('test')
+                    #        os.remove(test_file)
+                    #        logger.info(f"アップロードディレクトリの書き込み権限を確認しました: {upload_dir}")
+                    #    except Exception as write_test_error:
+                    #        logger.error(f"アップロードディレクトリに書き込み権限がありません: {upload_dir}, エラー: {str(write_test_error)}")
+                    #        raise HTTPException(
+                    #            status_code=500,
+                    #            detail=f"アップロードディレクトリに書き込み権限がありません: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
+                    #        )
+                    #except PermissionError as perm_error:
+                    #    logger.info(f"アップロードディレクトリの作成に失敗しました（権限エラー）: {upload_dir}")
+                    #    raise HTTPException(
+                    #        status_code=500,
+                    #        detail=f"アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(perm_error)}"
+                    #    )
+                    #except OSError as os_error:
+                    #    logger.info(f"アップロードディレクトリの作成に失敗しました: {upload_dir}")
+                    #    raise HTTPException(
+                    #        status_code=500,
+                    #        detail=f"アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(os_error)}"
+                    #    )
                     
                     # ファイルサイズ制限（各ファイル最大50MB、合計最大200MB）
                     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
