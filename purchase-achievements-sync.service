@@ -1,0 +1,26 @@
+[Unit]
+Description=Purchase Achievements Sync Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=mirai-api
+Group=mirai-api
+WorkingDirectory=/var/www/mirai-api
+Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
+ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/sync_purchase_achievements.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=purchase-achievements-sync
+
+# セキュリティ設定
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/mirai-api/logs /var/www/mirai-api/data
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+
