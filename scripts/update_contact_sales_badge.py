@@ -174,10 +174,10 @@ class ContactSalesBadgeUpdater:
         label = normalized.lower()
         compact = label.replace(" ", "").replace("　", "")
 
-        contract_keywords = ["契約", "決済", "contract", "settlement"]
-        purchase_keywords = ["見込み角度a", "見込み角度b", "買付取得", "買付", "purchase", "anglea", "angleb"]
-        survey_keywords = ["調査", "検討", "survey", "review"]
-        disclosure_keywords = ["資料開示", "開示", "disclosure"]
+        contract_keywords = ["契約", "決済"]
+        purchase_keywords = ["見込み確度A", "見込み確度B", "買付取得"]
+        survey_keywords = ["調査/検討"]
+        disclosure_keywords = ["資料開示", "物件紹介"]
 
         if any(keyword in compact for keyword in contract_keywords):
             return {
