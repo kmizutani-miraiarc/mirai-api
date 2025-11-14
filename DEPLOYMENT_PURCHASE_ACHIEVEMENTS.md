@@ -279,3 +279,4 @@ mysql -u root -p mirai_base -e "
 - `docs/PURCHASE_ACHIEVEMENTS_QUICKSTART.md`: クイックスタートガイド
 - `README_PURCHASE_ACHIEVEMENTS.md`: 概要とAPI仕様
 
+

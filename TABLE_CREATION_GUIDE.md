@@ -200,3 +200,4 @@ curl -X GET "http://localhost:8000/purchase-achievements?limit=10" \
 - `scripts/verify_purchase_achievements_setup.py`: 検証スクリプト
 - `main.py`: アプリケーション起動時にテーブルを自動作成
 
+

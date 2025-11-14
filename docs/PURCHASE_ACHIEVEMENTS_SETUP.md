@@ -170,3 +170,4 @@ INSERT INTO purchase_achievements (
 - HubSpotと連携しない場合は、これらの項目を `null` のままにしておくことができます
 - 同じ `hubspot_bukken_id` と `hubspot_deal_id` の組み合わせは1つのレコードのみが保存されます（重複防止）
 
+

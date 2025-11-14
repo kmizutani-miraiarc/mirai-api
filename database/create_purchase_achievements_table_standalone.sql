@@ -50,3 +50,4 @@ DESCRIBE purchase_achievements;
 -- インデックスの確認
 SHOW INDEX FROM purchase_achievements;
 
+

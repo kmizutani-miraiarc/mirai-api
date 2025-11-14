@@ -104,3 +104,4 @@ log_info "2. APIエンドポイントをテスト:"
 log_info "   curl -X GET 'http://localhost:8000/purchase-achievements?limit=10' \\"
 log_info "     -H 'X-API-Key: your-api-key'"
 
+

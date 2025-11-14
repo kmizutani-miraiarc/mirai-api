@@ -247,3 +247,4 @@ curl -X POST "http://localhost:8000/purchase-achievements" \
 - `routers/purchase_achievement.py`: APIエンドポイント
 - `docs/PURCHASE_ACHIEVEMENTS_SETUP.md`: セットアップガイド
 
+

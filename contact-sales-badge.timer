@@ -1,0 +1,12 @@
+[Unit]
+Description=Run HubSpot Contact Sales Badge Update daily at 4 AM
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+Unit=contact-sales-badge.service
+
+[Install]
+WantedBy=timers.target
+
+
