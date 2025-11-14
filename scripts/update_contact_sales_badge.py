@@ -6,8 +6,15 @@ HubSpotコンタクトの販売バッジ（契約数など）を更新するバ�
 import asyncio
 import logging
 import os
+import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, Any, Optional, List, Set
+
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from hubspot.config import Config
 from hubspot.deals import HubSpotDealsClient
