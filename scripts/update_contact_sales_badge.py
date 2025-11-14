@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import sys
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Set
@@ -169,7 +170,8 @@ class ContactSalesBadgeUpdater:
         if not stage_label:
             return set()
 
-        label = stage_label.lower()
+        normalized = unicodedata.normalize("NFKC", stage_label)
+        label = normalized.lower()
         compact = label.replace(" ", "").replace("　", "")
 
         contract_keywords = ["契約", "決済", "contract", "settlement"]
