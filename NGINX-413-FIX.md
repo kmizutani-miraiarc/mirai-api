@@ -161,3 +161,4 @@ curl -X POST \
 3. **すべてのlocationブロックで`client_max_body_size`を設定**
 4. **グローバル、サーバー、locationすべてのレベルで設定することを推奨**
 
+

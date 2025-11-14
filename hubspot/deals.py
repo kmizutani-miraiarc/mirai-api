@@ -101,6 +101,47 @@ class HubSpotDealsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to get deal with associations {deal_id}: {str(e)}")
             return None
+    
+    async def get_deal_contact_ids(self, deal_id: str, limit: int = 100) -> List[str]:
+        """取引に関連づけられたコンタクトID一覧を取得（詳細情報は取得しない）"""
+        contact_ids: List[str] = []
+        after: Optional[str] = None
+        
+        try:
+            while True:
+                params = {"limit": limit}
+                if after:
+                    params["after"] = after
+                
+                result = await self._make_request(
+                    "GET",
+                    f"/crm/v4/objects/deals/{deal_id}/associations/contacts",
+                    params=params
+                )
+                
+                batch_ids = [
+                    assoc.get("toObjectId")
+                    for assoc in result.get("results", [])
+                    if assoc.get("toObjectId")
+                ]
+                contact_ids.extend(batch_ids)
+                
+                paging = result.get("paging", {})
+                next_after = paging.get("next", {}).get("after")
+                if next_after:
+                    after = str(next_after)
+                else:
+                    break
+            
+            logger.debug(f"Retrieved {len(contact_ids)} contact ids for deal {deal_id}")
+            return contact_ids
+        
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"Failed to get contact ids for deal {deal_id}: {e.response.status_code} - {e.response.text}")
+            return contact_ids
+        except Exception as e:
+            logger.warning(f"Failed to get contact ids for deal {deal_id}: {str(e)}")
+            return contact_ids
 
     async def get_deal_associations(self, deal_id: str) -> Dict[str, List[Dict[str, Any]]]:
         """取引に関連づけられた会社、コンタクト、物件を取得（レート制限対策付き）"""

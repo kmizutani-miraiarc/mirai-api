@@ -22,6 +22,7 @@ from routers.property_owner import router as property_owner_router
 from routers.slack import router as slack_router
 from routers.satei import router as satei_router
 from routers.haihai_click_log import router as haihai_click_log_router
+from routers.purchase_achievement import router as purchase_achievement_router
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -76,9 +77,66 @@ async def startup_event():
         await gmail_credentials_manager.create_tables()
         logger.info("Gmail認証情報テーブルの初期化が完了しました")
         
+        # 物件買取実績テーブルを作成（存在しない場合）
+        await create_purchase_achievements_table_if_not_exists()
+        logger.info("物件買取実績テーブルの初期化が完了しました")
+        
     except Exception as e:
         logger.error(f"アプリケーション起動時にエラーが発生しました: {str(e)}")
         raise
+
+async def create_purchase_achievements_table_if_not_exists():
+    """物件買取実績テーブルが存在しない場合、作成する"""
+    try:
+        # テーブルの存在確認
+        check_query = """
+            SELECT COUNT(*) as count 
+            FROM information_schema.tables 
+            WHERE table_schema = DATABASE() 
+            AND table_name = 'purchase_achievements'
+        """
+        result = await db_connection.execute_query(check_query)
+        
+        if result and result[0].get("count", 0) > 0:
+            logger.info("物件買取実績テーブルは既に存在します")
+            return
+        
+        # テーブルが存在しない場合は作成
+        logger.info("物件買取実績テーブルが存在しないため、作成します...")
+        
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS purchase_achievements (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            property_image_url TEXT COMMENT '物件写真URL',
+            purchase_date DATE COMMENT '買取日',
+            title VARCHAR(255) COMMENT 'タイトル（例：◯県◯市一棟アパート）',
+            property_name VARCHAR(255) COMMENT '物件名',
+            building_age INT COMMENT '築年数',
+            structure VARCHAR(100) COMMENT '構造',
+            nearest_station VARCHAR(255) COMMENT '最寄り',
+            hubspot_bukken_id VARCHAR(255) COMMENT 'HubSpotの物件ID',
+            hubspot_bukken_created_date DATETIME COMMENT 'HubSpotの物件登録日（オブジェクトの作成日）',
+            hubspot_deal_id VARCHAR(255) COMMENT 'HubSpotの取引ID',
+            is_public BOOLEAN DEFAULT FALSE COMMENT '公開フラグ',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'レコード作成日',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'レコード更新日',
+            INDEX idx_hubspot_bukken_id (hubspot_bukken_id),
+            INDEX idx_hubspot_deal_id (hubspot_deal_id),
+            INDEX idx_purchase_date (purchase_date),
+            INDEX idx_is_public (is_public),
+            INDEX idx_created_at (created_at),
+            INDEX idx_bukken_deal (hubspot_bukken_id, hubspot_deal_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='物件買取実績テーブル';
+        """
+        
+        await db_connection.execute_update(create_table_sql)
+        logger.info("物件買取実績テーブルを作成しました")
+        
+    except Exception as e:
+        logger.error(f"物件買取実績テーブルの作成に失敗しました: {str(e)}")
+        # テーブル作成に失敗してもアプリケーションは起動を続ける
+        # （既にテーブルが存在する場合など）
+        logger.warning("物件買取実績テーブルの作成をスキップします")
 
 # アプリケーション終了時のイベントハンドラー
 @app.on_event("shutdown")
@@ -105,6 +163,7 @@ app.include_router(property_owner_router)
 app.include_router(slack_router)
 app.include_router(satei_router)
 app.include_router(haihai_click_log_router)
+app.include_router(purchase_achievement_router)
 
 # レスポンス用のモデル
 class TestResponse(BaseModel):
@@ -479,7 +538,11 @@ async def api_info():
             {"path": "/hubspot/deal-histories/contracts", "method": "GET", "description": "契約ステージの履歴取得"},
             {"path": "/hubspot/deal-histories/settlements", "method": "GET", "description": "決済ステージの履歴取得"},
             {"path": "/hubspot/deal-histories/monthly-contracts", "method": "GET", "description": "月別契約件数取得"},
-            {"path": "/hubspot/deal-histories/monthly-settlements", "method": "GET", "description": "月別決済件数取得"}
+            {"path": "/hubspot/deal-histories/monthly-settlements", "method": "GET", "description": "月別決済件数取得"},
+            {"path": "/purchase-achievements", "method": "GET", "description": "物件買取実績一覧取得"},
+            {"path": "/purchase-achievements/{id}", "method": "GET", "description": "物件買取実績詳細取得"},
+            {"path": "/purchase-achievements", "method": "POST", "description": "物件買取実績作成"},
+            {"path": "/purchase-achievements/{id}", "method": "PATCH", "description": "物件買取実績更新"}
         ]
     }
 
