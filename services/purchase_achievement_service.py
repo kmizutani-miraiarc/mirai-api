@@ -170,6 +170,45 @@ class PurchaseAchievementService:
             logger.error(f"物件買取実績の取得に失敗しました: {str(e)}")
             raise
     
+    async def get_by_bukken_id(self, bukken_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """物件IDで物件買取実績を取得（hubspot_bukken_idのみで照合）"""
+        try:
+            if not bukken_id:
+                return None
+                
+            query = """
+                SELECT 
+                    id,
+                    property_image_url,
+                    purchase_date,
+                    title,
+                    property_name,
+                    building_age,
+                    structure,
+                    nearest_station,
+                    hubspot_bukken_id,
+                    hubspot_bukken_created_date,
+                    hubspot_deal_id,
+                    is_public,
+                    created_at,
+                    updated_at
+                FROM purchase_achievements
+                WHERE hubspot_bukken_id = %s
+                LIMIT 1
+            """
+            
+            results = await db_connection.execute_query(query, (bukken_id,))
+            if results:
+                result = results[0]
+                # date型とdatetime型を適切に変換
+                result = self._convert_date_types(result)
+                return result
+            return None
+            
+        except Exception as e:
+            logger.error(f"物件買取実績の取得に失敗しました: {str(e)}")
+            raise
+    
     async def get_list(
         self,
         is_public: Optional[bool] = None,
