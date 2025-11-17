@@ -415,7 +415,8 @@ class DealSearchRequest(BaseModel):
             "deal_lost_date",
             "introduction_datetime",
             "deal_disclosure_date",
-            "deal_non_applicable"
+            "deal_non_applicable",
+            "appraisal_property"
         ],
         example=[
             "dealname",
