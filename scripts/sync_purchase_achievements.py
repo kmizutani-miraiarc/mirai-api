@@ -2,7 +2,7 @@
 """
 物件買取実績同期バッチ処理スクリプト
 1日1回、午前3時に実行される
-販売パイプラインの「決済」または「契約」ステージの取引を取得し、物件情報をMySQLに保存
+仕入パイプラインの「決済」または「契約」ステージの取引を取得し、物件情報をMySQLに保存
 """
 
 import asyncio
@@ -36,8 +36,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 販売パイプラインID
-SALES_PIPELINE_ID = "682910274"
+# 仕入パイプラインID
+PURCHASE_PIPELINE_ID = "675713658"
 
 class PurchaseAchievementsSync:
     """物件買取実績同期クラス"""
@@ -52,8 +52,8 @@ class PurchaseAchievementsSync:
     async def get_target_stage_ids(self) -> tuple[List[str], List[str]]:
         """「決済」と「契約」ステージのIDを取得"""
         try:
-            stages = await self.deals_client.get_pipeline_stages(SALES_PIPELINE_ID)
-            logger.info(f"パイプライン {SALES_PIPELINE_ID} のステージを取得: {len(stages)}件")
+            stages = await self.deals_client.get_pipeline_stages(PURCHASE_PIPELINE_ID)
+            logger.info(f"パイプライン {PURCHASE_PIPELINE_ID} のステージを取得: {len(stages)}件")
             
             settlement_ids = []
             contract_ids = []
@@ -92,7 +92,7 @@ class PurchaseAchievementsSync:
                             {
                                 "propertyName": "pipeline",
                                 "operator": "EQ",
-                                "value": SALES_PIPELINE_ID
+                                "value": PURCHASE_PIPELINE_ID
                             },
                             {
                                 "propertyName": "dealstage",
