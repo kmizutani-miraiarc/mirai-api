@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Header, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Header, Query, Body, UploadFile, File, Response
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime
@@ -6,6 +6,9 @@ import logging
 import asyncio
 import sys
 import os
+import uuid
+import shutil
+from pathlib import Path
 from models.purchase_achievement import PurchaseAchievement, PurchaseAchievementCreate, PurchaseAchievementUpdate
 from services.purchase_achievement_service import PurchaseAchievementService
 from database.api_keys import api_key_manager
@@ -13,6 +16,14 @@ from database.api_keys import api_key_manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 画像アップロード用のディレクトリ
+UPLOAD_DIR = os.getenv('PURCHASE_ACHIEVEMENTS_UPLOAD_DIR', '/var/www/mirai-api/data/purchase_achievements')
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# 許可する画像形式
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # API認証の依存関数
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
@@ -422,4 +433,118 @@ async def sync_purchase_achievements(
         raise HTTPException(
             status_code=500,
             detail=error_detail
+        )
+
+@router.post("/purchase-achievements/upload-image")
+async def upload_purchase_achievement_image(
+    file: UploadFile = File(...),
+    api_key: dict = Depends(verify_api_key)
+):
+    """物件買取実績の画像をアップロード"""
+    try:
+        # ファイル名の検証
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="ファイル名が指定されていません")
+        
+        # ファイル拡張子の検証
+        file_extension = Path(file.filename).suffix.lower()
+        if file_extension not in ALLOWED_IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"サポートされていない画像形式です。対応形式: {', '.join(ALLOWED_IMAGE_EXTENSIONS)}"
+            )
+        
+        # ファイルサイズの検証
+        file_content = await file.read()
+        file_size = len(file_content)
+        if file_size > MAX_IMAGE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"ファイルサイズが大きすぎます（最大10MB）。現在のサイズ: {file_size / (1024 * 1024):.2f}MB"
+            )
+        
+        # ファイルポインタを先頭に戻す
+        await file.seek(0)
+        
+        # 一意のファイル名を生成
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        
+        # ファイルを保存
+        with open(file_path, 'wb') as f:
+            shutil.copyfileobj(file.file, f)
+        
+        logger.info(f"画像をアップロードしました: {file_path} ({file_size} bytes)")
+        
+        # 画像URLを返す（相対パスで返す）
+        # フロントエンド側でAPI_BASE_URLと組み合わせて使用
+        image_url = f"/purchase-achievements/images/{unique_filename}"
+        
+        return {
+            "status": "success",
+            "message": "画像のアップロードに成功しました",
+            "data": {
+                "image_url": image_url,
+                "filename": unique_filename,
+                "size": file_size
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"画像アップロードに失敗しました: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"画像のアップロードに失敗しました: {str(e)}"
+        )
+
+@router.get("/purchase-achievements/images/{filename}")
+async def get_purchase_achievement_image(
+    filename: str,
+    api_key: dict = Depends(verify_api_key)
+):
+    """物件買取実績の画像を取得"""
+    try:
+        # セキュリティチェック：ファイル名にパス区切り文字が含まれていないか確認
+        if '/' in filename or '..' in filename:
+            raise HTTPException(status_code=400, detail="無効なファイル名です")
+        
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        
+        # ファイルが存在するか確認
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="画像が見つかりません")
+        
+        # ファイルの拡張子からMIMEタイプを判定
+        file_extension = Path(filename).suffix.lower()
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.bmp': 'image/bmp'
+        }
+        content_type = mime_types.get(file_extension, 'image/jpeg')
+        
+        # ファイルを読み込んで返す
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+        
+        return Response(
+            content=file_content,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"'
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"画像取得に失敗しました: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"画像の取得に失敗しました: {str(e)}"
         )
