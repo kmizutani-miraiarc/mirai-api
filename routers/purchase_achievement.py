@@ -3,6 +3,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime
 import logging
+import asyncio
+import sys
+import os
 from models.purchase_achievement import PurchaseAchievement, PurchaseAchievementCreate, PurchaseAchievementUpdate
 from services.purchase_achievement_service import PurchaseAchievementService
 from database.api_keys import api_key_manager
@@ -298,7 +301,7 @@ async def delete_purchase_achievement(
     achievement_id: int,
     api_key: dict = Depends(verify_api_key)
 ):
-    """物件買取実績を削除"""
+    """物件買取実績を削除（HubSpotのデータは削除しない）"""
     try:
         service = PurchaseAchievementService()
         
@@ -310,12 +313,19 @@ async def delete_purchase_achievement(
                 detail=f"物件買取実績（ID: {achievement_id}）が見つかりません"
             )
         
-        # 削除処理（サービスに削除メソッドを追加する必要がある）
-        # 現時点では削除機能は実装していないため、エラーを返す
-        raise HTTPException(
-            status_code=501,
-            detail="物件買取実績の削除機能はまだ実装されていません"
-        )
+        # 削除処理（HubSpotのデータは削除しない）
+        success = await service.delete(achievement_id)
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="物件買取実績の削除に失敗しました"
+            )
+        
+        return {
+            "status": "success",
+            "message": "物件買取実績を正常に削除しました",
+            "data": {"id": achievement_id}
+        }
         
     except HTTPException:
         raise
@@ -324,4 +334,92 @@ async def delete_purchase_achievement(
         raise HTTPException(
             status_code=500,
             detail=f"物件買取実績の削除に失敗しました: {str(e)}"
+        )
+
+@router.post("/purchase-achievements/sync")
+async def sync_purchase_achievements(
+    api_key: dict = Depends(verify_api_key)
+):
+    """HubSpotから物件買取実績情報を取り込むバッチ処理を実行"""
+    try:
+        # バッチスクリプトのパスを取得
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_path = os.path.join(script_dir, "scripts", "sync_purchase_achievements.py")
+        
+        logger.info(f"バッチ処理開始: script_dir={script_dir}, script_path={script_path}")
+        
+        # スクリプトが存在するか確認
+        if not os.path.exists(script_path):
+            error_msg = f"バッチスクリプトが見つかりません: {script_path}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=404,
+                detail=error_msg
+            )
+        
+        # スクリプトのディレクトリをパスに追加（インポート前に）
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+            logger.info(f"パスに追加しました: {script_dir}")
+        
+        # バックグラウンドでバッチを実行
+        async def run_sync():
+            """バッチ処理を非同期で実行"""
+            try:
+                logger.info("バッチ処理のインポートを開始します")
+                
+                # バッチスクリプトのクラスをインポート
+                try:
+                    from scripts.sync_purchase_achievements import PurchaseAchievementsSync
+                    logger.info("PurchaseAchievementsSync クラスのインポートに成功しました")
+                except ImportError as e:
+                    logger.error(f"インポートエラー: {str(e)}", exc_info=True)
+                    raise
+                except Exception as e:
+                    logger.error(f"インポート時の予期しないエラー: {str(e)}", exc_info=True)
+                    raise
+                
+                # 同期処理を実行
+                logger.info("バッチ処理の実行を開始します")
+                sync = PurchaseAchievementsSync()
+                await sync.sync()
+                
+                logger.info("バッチ処理が正常に完了しました")
+                
+            except ImportError as e:
+                logger.error(f"モジュールのインポートに失敗しました: {str(e)}", exc_info=True)
+                raise
+            except Exception as e:
+                logger.error(f"バッチ処理の実行中にエラーが発生しました: {str(e)}", exc_info=True)
+                raise
+        
+        # バックグラウンドタスクとして非同期で実行（エラーをハンドリング）
+        async def run_with_error_handling():
+            """エラーハンドリング付きでバッチ処理を実行"""
+            try:
+                await run_sync()
+            except Exception as e:
+                logger.error(f"バックグラウンドタスクの実行中にエラーが発生しました: {str(e)}", exc_info=True)
+        
+        # タスクを作成してバックグラウンドで実行
+        logger.info("バックグラウンドタスクを作成します")
+        asyncio.create_task(run_with_error_handling())
+        
+        return {
+            "status": "success",
+            "message": "バッチ処理を開始しました。バックグラウンドで実行中です。",
+            "data": {
+                "script": "sync_purchase_achievements.py",
+                "status": "running"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_detail = f"バッチ処理の開始に失敗しました: {str(e)}"
+        logger.error(error_detail, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
         )

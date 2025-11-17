@@ -51,3 +51,4 @@ DESCRIBE purchase_achievements;
 SHOW INDEX FROM purchase_achievements;
 
 
+

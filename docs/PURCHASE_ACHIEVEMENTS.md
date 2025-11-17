@@ -208,3 +208,4 @@ sudo journalctl -u purchase-achievements-sync.service -f
    - `X-API-Key` ヘッダーが正しく設定されているか確認
 
 
+

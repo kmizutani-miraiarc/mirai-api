@@ -209,3 +209,4 @@ sudo systemctl start purchase-achievements-sync.timer
 すべての実装が完了しました。上記のセットアップ手順を実行して、機能を利用してください。
 
 
+

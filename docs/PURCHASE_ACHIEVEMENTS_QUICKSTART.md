@@ -234,3 +234,4 @@ curl -X PATCH "http://localhost:8000/purchase-achievements/{id}" \
 - `README_PURCHASE_ACHIEVEMENTS.md`: 概要とAPI仕様
 
 
+

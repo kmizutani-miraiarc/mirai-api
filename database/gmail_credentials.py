@@ -128,3 +128,4 @@ class GmailCredentialsManager:
 # グローバルなGmail認証情報管理インスタンス
 gmail_credentials_manager = GmailCredentialsManager()
 
+

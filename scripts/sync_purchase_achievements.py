@@ -318,11 +318,17 @@ class PurchaseAchievementsSync:
     
     async def sync(self):
         """物件買取実績を同期"""
+        pool_created_by_this_call = False
         try:
             logger.info("物件買取実績の同期を開始します")
             
-            # データベース接続を確立
-            await db_connection.create_pool()
+            # データベース接続を確立（既存のプールがない場合のみ作成）
+            if not db_connection.pool:
+                await db_connection.create_pool()
+                pool_created_by_this_call = True
+                logger.info("新しいデータベース接続プールを作成しました")
+            else:
+                logger.info("既存のデータベース接続プールを使用します")
             
             # ステージIDを取得
             settlement_ids, contract_ids = await self.get_target_stage_ids()
@@ -359,8 +365,13 @@ class PurchaseAchievementsSync:
             logger.error(f"物件買取実績の同期に失敗しました: {str(e)}")
             raise
         finally:
-            # データベース接続を閉じる
-            await db_connection.close_pool()
+            # データベース接続を閉じる（この呼び出しで作成した場合のみ）
+            # APIエンドポイントから呼び出された場合は、既存の接続プールを閉じない
+            if pool_created_by_this_call and db_connection.pool:
+                await db_connection.close_pool()
+                logger.info("この呼び出しで作成したデータベース接続プールを閉じました")
+            else:
+                logger.info("既存のデータベース接続プールは保持します（APIサーバーで使用中）")
 
 async def main():
     """メイン関数"""

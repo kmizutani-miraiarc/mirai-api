@@ -201,3 +201,4 @@ curl -X GET "http://localhost:8000/purchase-achievements?limit=10" \
 - `main.py`: アプリケーション起動時にテーブルを自動作成
 
 
+

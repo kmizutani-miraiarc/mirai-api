@@ -352,4 +352,16 @@ class PurchaseAchievementService:
         except Exception as e:
             logger.error(f"物件買取実績のupsertに失敗しました: {str(e)}")
             raise
+    
+    async def delete(self, achievement_id: int) -> bool:
+        """物件買取実績を削除（HubSpotのデータは削除しない）"""
+        try:
+            query = "DELETE FROM purchase_achievements WHERE id = %s"
+            rowcount = await db_connection.execute_update(query, (achievement_id,))
+            logger.info(f"物件買取実績を削除しました: id={achievement_id}, rowcount={rowcount}")
+            return rowcount > 0
+            
+        except Exception as e:
+            logger.error(f"物件買取実績の削除に失敗しました: id={achievement_id}, error={str(e)}")
+            raise
 

@@ -280,3 +280,4 @@ mysql -u root -p mirai_base -e "
 - `README_PURCHASE_ACHIEVEMENTS.md`: 概要とAPI仕様
 
 
+
