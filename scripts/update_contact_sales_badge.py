@@ -7,10 +7,9 @@ import asyncio
 import logging
 import os
 import sys
-import unicodedata
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Set
+from typing import Dict, Any, Optional, List
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
@@ -46,7 +45,17 @@ DEAL_PROPERTIES = [
     "pipeline",
     "hubspot_owner_id",
     "createdate",
-    "hs_lastmodifieddate"
+    "hs_lastmodifieddate",
+    "introduction_datetime",
+    "deal_disclosure_date",
+    "deal_survey_review_date",
+    "purchase_date",
+    "deal_probability_b_date",
+    "deal_probability_a_date",
+    "contract_date",
+    "settlement_date",
+    "deal_farewell_date",
+    "deal_lost_date"
 ]
 
 
@@ -59,10 +68,16 @@ class ContactSalesBadgeUpdater:
         self.stage_labels: Dict[str, str] = {}
         self.total_deals_processed = 0
         self.contact_counters = defaultdict(lambda: {
-            "contact_contracts": 0,
-            "contact_purchases": 0,
-            "contact_surveys_considered": 0,
-            "contact_documents_disclosed": 0
+            "contact_property_acquisition": 0,  # 物件取得数
+            "contact_documents_disclosed": 0,   # 資料開示数
+            "contact_surveys_considered": 0,    # 調査検討数
+            "contact_purchases": 0,             # 買付取得数
+            "contact_probability_b": 0,         # 見込み確度B数
+            "contact_probability_a": 0,         # 見込み確度A数
+            "contact_contracts": 0,             # 契約数
+            "contact_settlement": 0,            # 決済数
+            "contact_seeing_off": 0,            # 見送り数
+            "contact_lost_order": 0             # 失注数
         })
 
     async def run(self):
@@ -78,7 +93,7 @@ class ContactSalesBadgeUpdater:
         logger.info("販売パイプラインのコンタクトバッジ更新が完了しました。")
 
     async def _load_stage_labels(self):
-        """販売パイプラインのステージラベルを取得"""
+        """販売パイプラインのステージラベルを取得（ログ用に保持）"""
         stages = await self.deals_client.get_pipeline_stages(SALES_PIPELINE_ID)
         self.stage_labels = {
             stage.get("id"): stage.get("label", "")
@@ -139,71 +154,73 @@ class ContactSalesBadgeUpdater:
                     f"カウント対象コンタクト数: {len(self.contact_counters)}")
 
     async def _process_deal(self, deal: Dict[str, Any]):
-        """1件の取引を処理し、ステージに応じてコンタクトのカウンターを更新"""
+        """1件の取引を処理し、日付フィールドの値の有無でコンタクトのカウンターを更新"""
         properties = deal.get("properties", {})
+        
+        # 販売パイプラインの取引のみを処理
         if properties.get("pipeline") != SALES_PIPELINE_ID:
-            return
-
-        stage_id = properties.get("dealstage")
-        stage_label = self.stage_labels.get(stage_id, "")
-        counters = self._determine_counters(stage_label)
-
-        if not counters:
-            logger.debug(f"ステージ {stage_label} は集計対象外です (deal_id={deal.get('id')}).")
             return
 
         contact_ids = await self.deals_client.get_deal_contact_ids(deal.get("id"))
         if not contact_ids:
-            logger.info(f"取引 {deal.get('id')} にはコンタクトの関連がありません。")
+            logger.debug(f"取引 {deal.get('id')} にはコンタクトの関連がありません。")
             return
 
+        # 日付フィールドの値の有無をチェックしてカウンターを更新
+        counters_to_update = set()
+        
+        # introduction_datetime → contact_property_acquisition
+        if properties.get("introduction_datetime"):
+            counters_to_update.add("contact_property_acquisition")
+        
+        # deal_disclosure_date → contact_documents_disclosed
+        if properties.get("deal_disclosure_date"):
+            counters_to_update.add("contact_documents_disclosed")
+        
+        # deal_survey_review_date → contact_surveys_considered
+        if properties.get("deal_survey_review_date"):
+            counters_to_update.add("contact_surveys_considered")
+        
+        # purchase_date → contact_purchases
+        if properties.get("purchase_date"):
+            counters_to_update.add("contact_purchases")
+        
+        # deal_probability_b_date → contact_probability_b
+        if properties.get("deal_probability_b_date"):
+            counters_to_update.add("contact_probability_b")
+        
+        # deal_probability_a_date → contact_probability_a
+        if properties.get("deal_probability_a_date"):
+            counters_to_update.add("contact_probability_a")
+        
+        # contract_date → contact_contracts
+        if properties.get("contract_date"):
+            counters_to_update.add("contact_contracts")
+        
+        # settlement_date → contact_settlement
+        if properties.get("settlement_date"):
+            counters_to_update.add("contact_settlement")
+        
+        # deal_farewell_date → contact_seeing_off
+        if properties.get("deal_farewell_date"):
+            counters_to_update.add("contact_seeing_off")
+        
+        # deal_lost_date → contact_lost_order
+        if properties.get("deal_lost_date"):
+            counters_to_update.add("contact_lost_order")
+
+        if not counters_to_update:
+            logger.debug(f"取引 {deal.get('id')} には集計対象の日付フィールドがありません。")
+            return
+
+        # 関連コンタクトごとにカウンターを更新
         for contact_id in contact_ids:
             stats = self.contact_counters[contact_id]
-            for counter_name in counters:
+            for counter_name in counters_to_update:
                 stats[counter_name] += 1
 
-        logger.debug(f"取引 {deal.get('id')} のステージ '{stage_label}' を集計しました。 "
-                     f"関連コンタクト: {len(contact_ids)}件, カウンター: {counters}")
-
-    def _determine_counters(self, stage_label: Optional[str]) -> Set[str]:
-        """ステージラベルから更新すべきカウンターを判定"""
-        if not stage_label:
-            return set()
-
-        normalized = unicodedata.normalize("NFKC", stage_label)
-        label = normalized.lower()
-        compact = label.replace(" ", "").replace("　", "")
-
-        contract_keywords = ["契約", "決済"]
-        purchase_keywords = ["見込み確度A", "見込み確度B", "買付取得"]
-        survey_keywords = ["調査/検討"]
-        disclosure_keywords = ["資料開示", "物件紹介"]
-
-        if any(keyword in compact for keyword in contract_keywords):
-            return {
-                "contact_contracts",
-                "contact_purchases",
-                "contact_surveys_considered",
-                "contact_documents_disclosed"
-            }
-
-        if any(keyword in compact for keyword in purchase_keywords):
-            return {
-                "contact_purchases",
-                "contact_surveys_considered",
-                "contact_documents_disclosed"
-            }
-
-        if any(keyword in compact for keyword in survey_keywords):
-            return {
-                "contact_surveys_considered",
-                "contact_documents_disclosed"
-            }
-
-        if any(keyword in compact for keyword in disclosure_keywords):
-            return {"contact_documents_disclosed"}
-
-        return set()
+        logger.debug(f"取引 {deal.get('id')} を集計しました。 "
+                     f"関連コンタクト: {len(contact_ids)}件, 更新カウンター: {counters_to_update}")
 
     async def _update_contacts(self):
         """集計した結果をHubSpotコンタクトに反映"""
@@ -215,10 +232,16 @@ class ContactSalesBadgeUpdater:
         for contact_id, counters in self.contact_counters.items():
             payload = {
                 "properties": {
-                    "contact_contracts": counters["contact_contracts"],
-                    "contact_purchases": counters["contact_purchases"],
+                    "contact_property_acquisition": counters["contact_property_acquisition"],
+                    "contact_documents_disclosed": counters["contact_documents_disclosed"],
                     "contact_surveys_considered": counters["contact_surveys_considered"],
-                    "contact_documents_disclosed": counters["contact_documents_disclosed"]
+                    "contact_purchases": counters["contact_purchases"],
+                    "contact_probability_b": counters["contact_probability_b"],
+                    "contact_probability_a": counters["contact_probability_a"],
+                    "contact_contracts": counters["contact_contracts"],
+                    "contact_settlement": counters["contact_settlement"],
+                    "contact_seeing_off": counters["contact_seeing_off"],
+                    "contact_lost_order": counters["contact_lost_order"]
                 }
             }
 
