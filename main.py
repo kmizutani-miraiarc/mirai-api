@@ -114,6 +114,9 @@ async def create_purchase_achievements_table_if_not_exists():
             building_age INT COMMENT '築年数',
             structure VARCHAR(100) COMMENT '構造',
             nearest_station VARCHAR(255) COMMENT '最寄り',
+            prefecture VARCHAR(50) COMMENT '都道府県',
+            city VARCHAR(100) COMMENT '市区町村',
+            address_detail VARCHAR(255) COMMENT '番地以下',
             hubspot_bukken_id VARCHAR(255) COMMENT 'HubSpotの物件ID',
             hubspot_bukken_created_date DATETIME COMMENT 'HubSpotの物件登録日（オブジェクトの作成日）',
             hubspot_deal_id VARCHAR(255) COMMENT 'HubSpotの取引ID',
@@ -125,9 +128,106 @@ async def create_purchase_achievements_table_if_not_exists():
             INDEX idx_purchase_date (purchase_date),
             INDEX idx_is_public (is_public),
             INDEX idx_created_at (created_at),
+            INDEX idx_prefecture (prefecture),
+            INDEX idx_city (city),
             INDEX idx_bukken_deal (hubspot_bukken_id, hubspot_deal_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='物件買取実績テーブル';
         """
+        
+        await db_connection.execute_update(create_table_sql)
+        
+        # 既存テーブルに住所カラムを追加（存在しない場合のみ）
+        # カラムの存在確認
+        check_columns_query = """
+            SELECT COLUMN_NAME 
+            FROM information_schema.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'purchase_achievements'
+            AND COLUMN_NAME IN ('prefecture', 'city', 'address_detail')
+        """
+        try:
+            existing_columns_result = await db_connection.execute_query(check_columns_query)
+            # 辞書またはタプルで返される可能性があるため、両方に対応
+            existing_columns = set()
+            if existing_columns_result:
+                for row in existing_columns_result:
+                    if isinstance(row, dict):
+                        column_name = row.get("COLUMN_NAME") or row.get("column_name")
+                    else:
+                        column_name = row[0] if len(row) > 0 else None
+                    if column_name:
+                        existing_columns.add(column_name)
+            
+            logger.info(f"既存カラム確認結果: {existing_columns}")
+            
+            alter_queries = []
+            if "prefecture" not in existing_columns:
+                alter_queries.append("ALTER TABLE purchase_achievements ADD COLUMN prefecture VARCHAR(50) COMMENT '都道府県' AFTER nearest_station")
+            if "city" not in existing_columns:
+                alter_queries.append("ALTER TABLE purchase_achievements ADD COLUMN city VARCHAR(100) COMMENT '市区町村' AFTER prefecture")
+            if "address_detail" not in existing_columns:
+                alter_queries.append("ALTER TABLE purchase_achievements ADD COLUMN address_detail VARCHAR(255) COMMENT '番地以下' AFTER city")
+            
+            for query in alter_queries:
+                try:
+                    await db_connection.execute_update(query)
+                    column_name = query.split("ADD COLUMN")[1].split("COMMENT")[0].strip()
+                    logger.info(f"カラムを追加しました: {column_name}")
+                except Exception as e:
+                    error_msg = str(e)
+                    # カラムが既に存在する場合のエラーは無視
+                    if "Duplicate column name" not in error_msg and "already exists" not in error_msg.lower():
+                        logger.warning(f"カラム追加に失敗しました: {error_msg}")
+                        logger.exception(e)
+            
+            # インデックスの存在確認と追加
+            check_indexes_query = """
+                SELECT INDEX_NAME 
+                FROM information_schema.STATISTICS 
+                WHERE TABLE_SCHEMA = DATABASE() 
+                AND TABLE_NAME = 'purchase_achievements'
+                AND INDEX_NAME IN ('idx_prefecture', 'idx_city')
+            """
+            try:
+                existing_indexes_result = await db_connection.execute_query(check_indexes_query)
+                existing_indexes = set()
+                if existing_indexes_result:
+                    for row in existing_indexes_result:
+                        if isinstance(row, dict):
+                            index_name = row.get("INDEX_NAME") or row.get("index_name")
+                        else:
+                            index_name = row[0] if len(row) > 0 else None
+                        if index_name:
+                            existing_indexes.add(index_name)
+                
+                logger.info(f"既存インデックス確認結果: {existing_indexes}")
+                
+                if "idx_prefecture" not in existing_indexes:
+                    try:
+                        await db_connection.execute_update("CREATE INDEX idx_prefecture ON purchase_achievements (prefecture)")
+                        logger.info("インデックス idx_prefecture を追加しました")
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "Duplicate key name" not in error_msg and "already exists" not in error_msg.lower():
+                            logger.warning(f"インデックス追加に失敗しました: {error_msg}")
+                else:
+                    logger.info("インデックス idx_prefecture は既に存在します")
+                
+                if "idx_city" not in existing_indexes:
+                    try:
+                        await db_connection.execute_update("CREATE INDEX idx_city ON purchase_achievements (city)")
+                        logger.info("インデックス idx_city を追加しました")
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "Duplicate key name" not in error_msg and "already exists" not in error_msg.lower():
+                            logger.warning(f"インデックス追加に失敗しました: {error_msg}")
+                else:
+                    logger.info("インデックス idx_city は既に存在します")
+            except Exception as e:
+                logger.warning(f"インデックス確認に失敗しました（無視して続行）: {str(e)}")
+        except Exception as e:
+            logger.warning(f"カラム追加処理中にエラーが発生しました（無視して続行）: {str(e)}")
+            logger.exception(e)
         
         await db_connection.execute_update(create_table_sql)
         logger.info("物件買取実績テーブルを作成しました")

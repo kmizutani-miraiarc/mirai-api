@@ -57,12 +57,15 @@ class PurchaseAchievementService:
                     building_age,
                     structure,
                     nearest_station,
+                    prefecture,
+                    city,
+                    address_detail,
                     hubspot_bukken_id,
                     hubspot_bukken_created_date,
                     hubspot_deal_id,
                     is_public
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """
             
@@ -74,6 +77,9 @@ class PurchaseAchievementService:
                 achievement.building_age,
                 achievement.structure,
                 achievement.nearest_station,
+                achievement.prefecture,
+                achievement.city,
+                achievement.address_detail,
                 achievement.hubspot_bukken_id,
                 format_datetime_for_db(achievement.hubspot_bukken_created_date),
                 achievement.hubspot_deal_id,
@@ -110,6 +116,9 @@ class PurchaseAchievementService:
                     building_age,
                     structure,
                     nearest_station,
+                    prefecture,
+                    city,
+                    address_detail,
                     hubspot_bukken_id,
                     hubspot_bukken_created_date,
                     hubspot_deal_id,
@@ -130,6 +139,7 @@ class PurchaseAchievementService:
             
         except Exception as e:
             logger.error(f"物件買取実績の取得に失敗しました: {str(e)}")
+            logger.error(f"エラーの詳細: {type(e).__name__}: {str(e)}")
             raise
     
     async def get_by_bukken_and_deal(self, bukken_id: Optional[str], deal_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -148,6 +158,9 @@ class PurchaseAchievementService:
                     building_age,
                     structure,
                     nearest_station,
+                    prefecture,
+                    city,
+                    address_detail,
                     hubspot_bukken_id,
                     hubspot_bukken_created_date,
                     hubspot_deal_id,
@@ -168,6 +181,7 @@ class PurchaseAchievementService:
             
         except Exception as e:
             logger.error(f"物件買取実績の取得に失敗しました: {str(e)}")
+            logger.error(f"エラーの詳細: {type(e).__name__}: {str(e)}")
             raise
     
     async def get_by_bukken_id(self, bukken_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -186,6 +200,9 @@ class PurchaseAchievementService:
                     building_age,
                     structure,
                     nearest_station,
+                    prefecture,
+                    city,
+                    address_detail,
                     hubspot_bukken_id,
                     hubspot_bukken_created_date,
                     hubspot_deal_id,
@@ -207,11 +224,13 @@ class PurchaseAchievementService:
             
         except Exception as e:
             logger.error(f"物件買取実績の取得に失敗しました: {str(e)}")
+            logger.error(f"エラーの詳細: {type(e).__name__}: {str(e)}")
             raise
     
     async def get_list(
         self,
         is_public: Optional[bool] = None,
+        prefecture: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
@@ -223,6 +242,10 @@ class PurchaseAchievementService:
             if is_public is not None:
                 conditions.append("is_public = %s")
                 params.append(is_public)
+            
+            if prefecture:
+                conditions.append("prefecture = %s")
+                params.append(prefecture)
             
             where_clause = ""
             if conditions:
@@ -238,6 +261,9 @@ class PurchaseAchievementService:
                     building_age,
                     structure,
                     nearest_station,
+                    prefecture,
+                    city,
+                    address_detail,
                     hubspot_bukken_id,
                     hubspot_bukken_created_date,
                     hubspot_deal_id,
@@ -263,11 +289,13 @@ class PurchaseAchievementService:
             
         except Exception as e:
             logger.error(f"物件買取実績一覧の取得に失敗しました: {str(e)}")
+            logger.error(f"エラーの詳細: {type(e).__name__}: {str(e)}")
             raise
     
     async def get_count(
         self,
-        is_public: Optional[bool] = None
+        is_public: Optional[bool] = None,
+        prefecture: Optional[str] = None
     ) -> int:
         """物件買取実績の総件数を取得"""
         try:
@@ -277,6 +305,10 @@ class PurchaseAchievementService:
             if is_public is not None:
                 conditions.append("is_public = %s")
                 params.append(is_public)
+            
+            if prefecture:
+                conditions.append("prefecture = %s")
+                params.append(prefecture)
             
             where_clause = ""
             if conditions:
@@ -331,6 +363,18 @@ class PurchaseAchievementService:
                 updates.append("nearest_station = %s")
                 params.append(achievement.nearest_station)
             
+            if achievement.prefecture is not None:
+                updates.append("prefecture = %s")
+                params.append(achievement.prefecture)
+            
+            if achievement.city is not None:
+                updates.append("city = %s")
+                params.append(achievement.city)
+            
+            if achievement.address_detail is not None:
+                updates.append("address_detail = %s")
+                params.append(achievement.address_detail)
+            
             if achievement.hubspot_bukken_created_date is not None:
                 updates.append("hubspot_bukken_created_date = %s")
                 params.append(format_datetime_for_db(achievement.hubspot_bukken_created_date))
@@ -377,6 +421,9 @@ class PurchaseAchievementService:
                         building_age=achievement.building_age,
                         structure=achievement.structure,
                         nearest_station=achievement.nearest_station,
+                        prefecture=achievement.prefecture,
+                        city=achievement.city,
+                        address_detail=achievement.address_detail,
                         hubspot_bukken_created_date=achievement.hubspot_bukken_created_date,
                         hubspot_deal_id=achievement.hubspot_deal_id,
                         is_public=achievement.is_public

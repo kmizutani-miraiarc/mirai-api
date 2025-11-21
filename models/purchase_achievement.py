@@ -16,6 +16,11 @@ class PurchaseAchievementBase(BaseModel):
     structure: Optional[str] = Field(None, description="構造")
     nearest_station: Optional[str] = Field(None, description="最寄り")
     
+    # 住所情報
+    prefecture: Optional[str] = Field(None, description="都道府県")
+    city: Optional[str] = Field(None, description="市区町村")
+    address_detail: Optional[str] = Field(None, description="番地以下")
+    
     # その他管理項目（HubSpot関連はオプショナル）
     hubspot_bukken_id: Optional[str] = Field(None, description="HubSpotの物件ID")
     hubspot_bukken_created_date: Optional[datetime] = Field(None, description="HubSpotの物件登録日（オブジェクトの作成日）")
@@ -35,6 +40,9 @@ class PurchaseAchievementUpdate(BaseModel):
     building_age: Optional[int] = None
     structure: Optional[str] = None
     nearest_station: Optional[str] = None
+    prefecture: Optional[str] = None
+    city: Optional[str] = None
+    address_detail: Optional[str] = None
     hubspot_bukken_created_date: Optional[datetime] = None
     hubspot_deal_id: Optional[str] = None
     is_public: Optional[bool] = None

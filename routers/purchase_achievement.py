@@ -69,6 +69,9 @@ class PurchaseAchievementCreateRequest(BaseModel):
     building_age: Optional[int] = None
     structure: Optional[str] = None
     nearest_station: Optional[str] = None
+    prefecture: Optional[str] = None
+    city: Optional[str] = None
+    address_detail: Optional[str] = None
     hubspot_bukken_id: Optional[str] = None
     hubspot_bukken_created_date: Optional[datetime] = None
     hubspot_deal_id: Optional[str] = None
@@ -83,6 +86,9 @@ class PurchaseAchievementUpdateRequest(BaseModel):
     building_age: Optional[int] = None
     structure: Optional[str] = None
     nearest_station: Optional[str] = None
+    prefecture: Optional[str] = None
+    city: Optional[str] = None
+    address_detail: Optional[str] = None
     hubspot_bukken_created_date: Optional[datetime] = None
     hubspot_deal_id: Optional[str] = None
     is_public: Optional[bool] = None
@@ -102,6 +108,7 @@ def format_date(d: Optional[date]) -> Optional[str]:
 @router.get("/purchase-achievements", response_model=PurchaseAchievementListResponse)
 async def get_purchase_achievements(
     is_public: Optional[bool] = Query(None, description="公開フラグでフィルタリング"),
+    prefecture: Optional[str] = Query(None, description="都道府県でフィルタリング"),
     limit: int = Query(100, ge=1, le=1000, description="取得件数上限"),
     offset: int = Query(0, ge=0, description="オフセット"),
     api_key: dict = Depends(verify_api_key)
@@ -113,12 +120,13 @@ async def get_purchase_achievements(
         # 一覧を取得
         achievements = await service.get_list(
             is_public=is_public,
+            prefecture=prefecture,
             limit=limit,
             offset=offset
         )
         
         # 総件数を取得
-        total = await service.get_count(is_public=is_public)
+        total = await service.get_count(is_public=is_public, prefecture=prefecture)
         
         # 日付を文字列に変換
         for achievement in achievements:
@@ -204,6 +212,9 @@ async def create_purchase_achievement(
             building_age=request.building_age,
             structure=request.structure,
             nearest_station=request.nearest_station,
+            prefecture=request.prefecture,
+            city=request.city,
+            address_detail=request.address_detail,
             hubspot_bukken_id=request.hubspot_bukken_id,
             hubspot_bukken_created_date=request.hubspot_bukken_created_date,
             hubspot_deal_id=request.hubspot_deal_id,
@@ -268,6 +279,9 @@ async def update_purchase_achievement(
             building_age=request.building_age,
             structure=request.structure,
             nearest_station=request.nearest_station,
+            prefecture=request.prefecture,
+            city=request.city,
+            address_detail=request.address_detail,
             hubspot_bukken_created_date=request.hubspot_bukken_created_date,
             hubspot_deal_id=request.hubspot_deal_id,
             is_public=request.is_public

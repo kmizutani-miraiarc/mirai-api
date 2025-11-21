@@ -19,7 +19,7 @@ from database.connection import db_connection
 from hubspot.deals import HubSpotDealsClient
 from hubspot.bukken import HubSpotBukkenClient
 from services.purchase_achievement_service import PurchaseAchievementService
-from models.purchase_achievement import PurchaseAchievementCreate
+from models.purchase_achievement import PurchaseAchievementCreate, PurchaseAchievementUpdate
 from hubspot.config import Config
 
 # ログ設定
@@ -267,14 +267,42 @@ class PurchaseAchievementsSync:
                 return False
             
             bukken_id = bukken.get("id")
+            bukken_properties = bukken.get("properties", {})
             
             # 既に取り込み済みかチェック（hubspot_bukken_idで照合）
             existing = await self.achievement_service.get_by_bukken_id(bukken_id)
-            if existing:
-                logger.info(f"物件 {bukken_id} は既に取り込み済みです（ID: {existing.get('id')}）。スキップします。")
-                return False
             
-            bukken_properties = bukken.get("properties", {})
+            if existing:
+                # 既存の物件がある場合は、HubSpotから取得できる項目のみを更新
+                logger.info(f"物件 {bukken_id} は既に取り込み済みです（ID: {existing.get('id')}）。更新処理を実行します。")
+                
+                # 築年数の処理
+                building_age = None
+                if bukken_properties.get("bukken_age"):
+                    try:
+                        building_age = int(bukken_properties.get("bukken_age"))
+                    except (ValueError, TypeError):
+                        pass
+                
+                # 更新対象の項目のみを含むUpdateモデルを作成
+                # HubSpotから取得できる項目のみ更新（物件名、都道府県、市区町村、番地以下、築年数、最寄り）
+                update_data = PurchaseAchievementUpdate(
+                    property_name=bukken_properties.get("bukken_name"),
+                    building_age=building_age,
+                    nearest_station=bukken_properties.get("bukken_nearest_station") or bukken_properties.get("nearest_station"),
+                    prefecture=bukken_properties.get("bukken_state"),
+                    city=bukken_properties.get("bukken_city"),
+                    address_detail=bukken_properties.get("bukken_address")
+                )
+                
+                # 更新処理を実行
+                success = await self.achievement_service.update(existing.get("id"), update_data)
+                if success:
+                    logger.info(f"物件 {bukken_id} の更新が完了しました（ID: {existing.get('id')}）")
+                    return True
+                else:
+                    logger.error(f"物件 {bukken_id} の更新に失敗しました（ID: {existing.get('id')}）")
+                    return False
             
             # 買取日を取得
             purchase_date = self.extract_purchase_date(deal)
@@ -307,6 +335,9 @@ class PurchaseAchievementsSync:
                 building_age=building_age,
                 structure=bukken_properties.get("bukken_structure"),
                 nearest_station=bukken_properties.get("bukken_nearest_station") or bukken_properties.get("nearest_station"),  # 最寄り駅
+                prefecture=bukken_properties.get("bukken_state"),  # 都道府県
+                city=bukken_properties.get("bukken_city"),  # 市区町村
+                address_detail=bukken_properties.get("bukken_address"),  # 番地以下
                 hubspot_bukken_id=bukken_id,
                 hubspot_bukken_created_date=bukken_created_date,
                 hubspot_deal_id=deal_id,
