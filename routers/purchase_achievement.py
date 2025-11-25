@@ -606,21 +606,37 @@ async def delete_purchase_achievement_image(
         else:
             logger.warning(f"画像URLに'/images/'が含まれていません: {image_url}")
         
-        # ファイル名が取得できた場合、物理ファイルを削除
+        # ファイル名が取得できた場合、物理ファイルを削除（画像サーバーの画像も削除）
         if filename and '/' not in filename and '..' not in filename:
             file_path = os.path.join(IMAGE_SERVER_UPLOAD_DIR, filename)
             logger.info(f"削除対象ファイルパス: {file_path}")
+            logger.info(f"IMAGE_SERVER_UPLOAD_DIR: {IMAGE_SERVER_UPLOAD_DIR}")
+            
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                    logger.info(f"画像ファイルを削除しました: {file_path}")
+                    logger.info(f"画像サーバーの画像ファイルを削除しました: {file_path}")
+                    
+                    # ファイルが実際に削除されたか確認
+                    if os.path.exists(file_path):
+                        logger.warning(f"ファイル削除後もファイルが存在しています: {file_path}")
+                    else:
+                        logger.info(f"ファイル削除が正常に完了しました: {file_path}")
+                except PermissionError as perm_error:
+                    logger.error(f"画像ファイルの削除に権限エラーが発生しました: {file_path}, error: {str(perm_error)}", exc_info=True)
+                    # 権限エラーの場合は処理を続行（データベースの更新は行う）
                 except Exception as file_error:
                     logger.error(f"画像ファイルの削除に失敗しました: {file_path}, error: {str(file_error)}", exc_info=True)
                     # ファイル削除に失敗しても処理は続行（データベースの更新は行う）
             else:
                 logger.warning(f"画像ファイルが見つかりませんでした（処理は続行）: {file_path}")
+                # ファイルが存在しない場合でも、データベースの更新は行う
         else:
             logger.warning(f"ファイル名を抽出できませんでした。画像URL: {image_url}")
+            if not filename:
+                logger.warning("ファイル名がNoneまたは空です")
+            if filename and ('/' in filename or '..' in filename):
+                logger.warning(f"セキュリティチェックに失敗しました: filename={filename}")
         
         # データベースの画像URLをnullに更新（直接SQLで更新）
         try:
