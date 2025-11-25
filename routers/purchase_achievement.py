@@ -13,6 +13,7 @@ from pathlib import Path
 from models.purchase_achievement import PurchaseAchievement, PurchaseAchievementCreate, PurchaseAchievementUpdate
 from services.purchase_achievement_service import PurchaseAchievementService
 from database.api_keys import api_key_manager
+from database.connection import db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -295,9 +296,29 @@ async def update_purchase_achievement(
         
         success = await service.update(achievement_id, achievement_update)
         if not success:
-            raise HTTPException(
-                status_code=500,
-                detail="物件買取実績の更新に失敗しました"
+            # 更新するフィールドがない場合（すべてNone）は成功として扱う
+            logger.warning(f"更新するフィールドがありませんでした: achievement_id={achievement_id}")
+            # ただし、エラーではなく、既存データを返す
+            achievement = await service.get_by_id(achievement_id)
+            if not achievement:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"物件買取実績（ID: {achievement_id}）が見つかりません"
+                )
+            # 日付を文字列に変換
+            if achievement.get("purchase_date"):
+                achievement["purchase_date"] = format_date(achievement["purchase_date"])
+            if achievement.get("hubspot_bukken_created_date"):
+                achievement["hubspot_bukken_created_date"] = format_datetime(achievement["hubspot_bukken_created_date"])
+            if achievement.get("created_at"):
+                achievement["created_at"] = format_datetime(achievement["created_at"])
+            if achievement.get("updated_at"):
+                achievement["updated_at"] = format_datetime(achievement["updated_at"])
+            
+            return PurchaseAchievementDetailResponse(
+                status="success",
+                message="物件買取実績を正常に取得しました（更新するフィールドがありませんでした）",
+                data=achievement
             )
         
         achievement = await service.get_by_id(achievement_id)
@@ -321,7 +342,9 @@ async def update_purchase_achievement(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"物件買取実績の更新に失敗しました: {str(e)}")
+        logger.error(f"物件買取実績の更新に失敗しました: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"トレースバック: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"物件買取実績の更新に失敗しました: {str(e)}"
@@ -540,4 +563,115 @@ async def get_purchase_achievement_image(
         raise HTTPException(
             status_code=500,
             detail=f"画像の取得に失敗しました: {str(e)}"
+        )
+
+@router.delete("/purchase-achievements/{achievement_id}/image")
+async def delete_purchase_achievement_image(
+    achievement_id: int,
+    api_key: dict = Depends(verify_api_key)
+):
+    """物件買取実績の画像を削除"""
+    try:
+        service = PurchaseAchievementService()
+        
+        # 既存レコードの確認
+        existing = await service.get_by_id(achievement_id)
+        if not existing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"物件買取実績（ID: {achievement_id}）が見つかりません"
+            )
+        
+        # 画像URLが設定されているか確認
+        image_url = existing.get("property_image_url")
+        if not image_url:
+            return {
+                "status": "success",
+                "message": "画像が設定されていないため、削除する必要がありません",
+                "data": {"achievement_id": achievement_id}
+            }
+        
+        # 画像URLからファイル名を抽出
+        filename = None
+        logger.info(f"画像URLからファイル名を抽出: image_url={image_url}, IMAGE_SERVER_UPLOAD_DIR={IMAGE_SERVER_UPLOAD_DIR}")
+        
+        if "/images/" in image_url:
+            filename = image_url.split("/images/")[-1]
+            # クエリパラメータやフラグメントを除去
+            if "?" in filename:
+                filename = filename.split("?")[0]
+            if "#" in filename:
+                filename = filename.split("#")[0]
+            logger.info(f"抽出されたファイル名: {filename}")
+        else:
+            logger.warning(f"画像URLに'/images/'が含まれていません: {image_url}")
+        
+        # ファイル名が取得できた場合、物理ファイルを削除
+        if filename and '/' not in filename and '..' not in filename:
+            file_path = os.path.join(IMAGE_SERVER_UPLOAD_DIR, filename)
+            logger.info(f"削除対象ファイルパス: {file_path}")
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.info(f"画像ファイルを削除しました: {file_path}")
+                except Exception as file_error:
+                    logger.error(f"画像ファイルの削除に失敗しました: {file_path}, error: {str(file_error)}", exc_info=True)
+                    # ファイル削除に失敗しても処理は続行（データベースの更新は行う）
+            else:
+                logger.warning(f"画像ファイルが見つかりませんでした（処理は続行）: {file_path}")
+        else:
+            logger.warning(f"ファイル名を抽出できませんでした。画像URL: {image_url}")
+        
+        # データベースの画像URLをnullに更新（直接SQLで更新）
+        try:
+            logger.info(f"データベース更新を開始: achievement_id={achievement_id}")
+            logger.info(f"db_connectionの状態: pool={db_connection.pool is not None}")
+            
+            # 接続プールが存在しない場合は作成
+            if not db_connection.pool:
+                logger.info("データベース接続プールが存在しないため、作成します")
+                await db_connection.create_pool()
+            
+            query = "UPDATE purchase_achievements SET property_image_url = NULL WHERE id = %s"
+            logger.info(f"実行するSQL: {query}, params: ({achievement_id},)")
+            rowcount = await db_connection.execute_update(query, (achievement_id,))
+            logger.info(f"データベース更新完了: achievement_id={achievement_id}, rowcount={rowcount}")
+            
+            if rowcount == 0:
+                logger.warning(f"物件買取実績が見つかりませんでした: achievement_id={achievement_id}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"物件買取実績（ID: {achievement_id}）が見つかりません"
+                )
+        except HTTPException:
+            raise
+        except Exception as db_error:
+            logger.error(f"データベース更新に失敗しました: {str(db_error)}", exc_info=True)
+            logger.error(f"エラータイプ: {type(db_error).__name__}")
+            logger.error(f"エラー詳細: {repr(db_error)}")
+            import traceback
+            logger.error(f"トレースバック: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"画像の削除に失敗しました: {str(db_error)}"
+            )
+        
+        logger.info(f"物件買取実績の画像を削除しました: achievement_id={achievement_id}")
+        
+        return {
+            "status": "success",
+            "message": "画像を正常に削除しました",
+            "data": {
+                "achievement_id": achievement_id,
+                "deleted_image_url": image_url
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"画像削除に失敗しました: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"画像の削除に失敗しました: {str(e)}"
         )

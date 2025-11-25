@@ -388,13 +388,30 @@ class PurchaseAchievementService:
                 params.append(achievement.is_public)
             
             if not updates:
-                return False
+                logger.warning(f"更新するフィールドがありません: achievement_id={achievement_id}")
+                # 更新するフィールドがない場合は、レコードが存在するか確認してTrueを返す
+                existing = await self.get_by_id(achievement_id)
+                return existing is not None
             
             params.append(achievement_id)
             query = f"UPDATE purchase_achievements SET {', '.join(updates)} WHERE id = %s"
             
+            logger.info(f"実行するSQL: {query}, params: {params}")
             rowcount = await db_connection.execute_update(query, tuple(params))
             logger.info(f"物件買取実績を更新しました: id={achievement_id}, rowcount={rowcount}")
+            
+            # rowcountが0の場合でも、レコードが存在するか確認
+            if rowcount == 0:
+                logger.warning(f"更新された行数が0です: achievement_id={achievement_id}")
+                existing = await self.get_by_id(achievement_id)
+                if existing:
+                    # レコードが存在する場合は、更新値が既存値と同じだった可能性がある
+                    logger.info(f"レコードは存在しますが、更新値が既存値と同じだった可能性があります: achievement_id={achievement_id}")
+                    return True
+                else:
+                    # レコードが存在しない場合はFalse
+                    return False
+            
             return rowcount > 0
             
         except Exception as e:
