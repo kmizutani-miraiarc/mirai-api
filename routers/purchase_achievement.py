@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query, Body, UploadFile, File, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime
@@ -17,9 +18,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 画像アップロード用のディレクトリ
-UPLOAD_DIR = os.getenv('PURCHASE_ACHIEVEMENTS_UPLOAD_DIR', '/var/www/mirai-api/data/purchase_achievements')
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# 画像アップロード用のディレクトリ（mirai-imageサーバー用）
+IMAGE_SERVER_UPLOAD_DIR = os.getenv('IMAGE_SERVER_UPLOAD_DIR', '/app/images')
+os.makedirs(IMAGE_SERVER_UPLOAD_DIR, exist_ok=True)
+
+# 画像サーバーのベースURL（環境変数で設定可能、デフォルトはmirai-imageサーバー）
+# 外部からアクセス可能なURLを設定（ブラウザからアクセスするため）
+IMAGE_SERVER_BASE_URL = os.getenv('IMAGE_SERVER_BASE_URL', 'http://mirai-image:80')
+IMAGE_SERVER_PUBLIC_URL = os.getenv('IMAGE_SERVER_PUBLIC_URL', 'http://localhost:8080')
 
 # 許可する画像形式
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
@@ -454,7 +460,7 @@ async def upload_purchase_achievement_image(
     file: UploadFile = File(...),
     api_key: dict = Depends(verify_api_key)
 ):
-    """物件買取実績の画像をアップロード"""
+    """物件買取実績の画像をアップロード（mirai-imageサーバーに保存）"""
     try:
         # ファイル名の検証
         if not file.filename:
@@ -482,17 +488,16 @@ async def upload_purchase_achievement_image(
         
         # 一意のファイル名を生成
         unique_filename = f"{uuid.uuid4()}{file_extension}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        file_path = os.path.join(IMAGE_SERVER_UPLOAD_DIR, unique_filename)
         
-        # ファイルを保存
+        # ファイルをmirai-imageサーバーのディレクトリに保存
         with open(file_path, 'wb') as f:
             shutil.copyfileobj(file.file, f)
         
-        logger.info(f"画像をアップロードしました: {file_path} ({file_size} bytes)")
+        logger.info(f"画像をmirai-imageサーバーにアップロードしました: {file_path} ({file_size} bytes)")
         
-        # 画像URLを返す（相対パスで返す）
-        # フロントエンド側でAPI_BASE_URLと組み合わせて使用
-        image_url = f"/purchase-achievements/images/{unique_filename}"
+        # 画像URLを返す（外部からアクセス可能なURLを使用）
+        image_url = f"{IMAGE_SERVER_PUBLIC_URL}/images/{unique_filename}"
         
         return {
             "status": "success",
@@ -518,41 +523,15 @@ async def get_purchase_achievement_image(
     filename: str,
     api_key: dict = Depends(verify_api_key)
 ):
-    """物件買取実績の画像を取得"""
+    """物件買取実績の画像を取得（mirai-imageサーバーにリダイレクト）"""
     try:
         # セキュリティチェック：ファイル名にパス区切り文字が含まれていないか確認
         if '/' in filename or '..' in filename:
             raise HTTPException(status_code=400, detail="無効なファイル名です")
         
-        file_path = os.path.join(UPLOAD_DIR, filename)
-        
-        # ファイルが存在するか確認
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="画像が見つかりません")
-        
-        # ファイルの拡張子からMIMEタイプを判定
-        file_extension = Path(filename).suffix.lower()
-        mime_types = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp',
-            '.bmp': 'image/bmp'
-        }
-        content_type = mime_types.get(file_extension, 'image/jpeg')
-        
-        # ファイルを読み込んで返す
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
-        
-        return Response(
-            content=file_content,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f'inline; filename="{filename}"'
-            }
-        )
+        # mirai-imageサーバーにリダイレクト（外部からアクセス可能なURLを使用）
+        image_url = f"{IMAGE_SERVER_PUBLIC_URL}/images/{filename}"
+        return RedirectResponse(url=image_url, status_code=302)
         
     except HTTPException:
         raise
