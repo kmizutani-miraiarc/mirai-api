@@ -41,6 +41,22 @@ DESCRIBE api_keys;
 -- サンプルデータの確認
 SELECT * FROM api_keys;
 
+-- ユーザーテーブル（user_gmail_credentialsテーブルが参照するため、先に作成）
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    google_id VARCHAR(255) UNIQUE NOT NULL COMMENT 'Google ID',
+    email VARCHAR(255) UNIQUE NOT NULL COMMENT 'メールアドレス',
+    name VARCHAR(255) NOT NULL COMMENT '名前',
+    picture VARCHAR(500) COMMENT 'プロフィール画像URL',
+    role ENUM('admin', 'user') DEFAULT 'user' COMMENT 'ロール',
+    last_login TIMESTAMP NULL COMMENT '最終ログイン日時',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    INDEX idx_google_id (google_id),
+    INDEX idx_email (email),
+    INDEX idx_role (role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='ユーザーテーブル';
+
 -- 査定物件ユーザー情報テーブル
 CREATE TABLE IF NOT EXISTS satei_users (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -61,15 +77,25 @@ CREATE TABLE IF NOT EXISTS satei_users (
 CREATE TABLE IF NOT EXISTS satei_properties (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL COMMENT '査定物件ユーザー情報ID（外部キー）',
-    file_name VARCHAR(255) NOT NULL COMMENT 'ファイル名',
-    file_path VARCHAR(500) NOT NULL COMMENT 'ファイルパス',
-    file_size INT COMMENT 'ファイルサイズ（バイト）',
-    mime_type VARCHAR(100) COMMENT 'MIMEタイプ',
+    owner_user_id INT COMMENT '担当者ユーザーID（usersテーブルへの外部キー）',
+    property_name VARCHAR(255) COMMENT '物件名',
+    request_date DATE COMMENT '依頼日',
+    status VARCHAR(50) DEFAULT 'parsing' COMMENT 'ステータス（parsing, evaluated, etc.）',
+    estimated_price_from DECIMAL(12, 2) COMMENT '査定価格（下限）',
+    estimated_price_to DECIMAL(12, 2) COMMENT '査定価格（上限）',
+    comment TEXT COMMENT 'コメント',
+    evaluation_date DATE COMMENT '査定日',
+    for_sale BOOLEAN DEFAULT FALSE COMMENT '売却フラグ',
+    evaluation_result ENUM('buyable', 'not_buyable', 'pending') COMMENT '査定結果',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
     FOREIGN KEY (user_id) REFERENCES satei_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_user_id (user_id),
-    INDEX idx_created_at (created_at)
+    INDEX idx_owner_user_id (owner_user_id),
+    INDEX idx_status (status),
+    INDEX idx_created_at (created_at),
+    INDEX idx_request_date (request_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='査定物件テーブル';
 
 -- Gmail認証情報テーブル（ユーザーごとのGmail API認証情報を保存）
@@ -120,6 +146,11 @@ CREATE TABLE IF NOT EXISTS purchase_achievements (
     structure VARCHAR(100) COMMENT '構造',
     nearest_station VARCHAR(255) COMMENT '最寄り',
     
+    -- 住所情報
+    prefecture VARCHAR(50) COMMENT '都道府県',
+    city VARCHAR(100) COMMENT '市区町村',
+    address_detail VARCHAR(255) COMMENT '番地以下',
+    
     -- その他管理項目（HubSpot関連はオプショナル）
     hubspot_bukken_id VARCHAR(255) COMMENT 'HubSpotの物件ID',
     hubspot_bukken_created_date DATETIME COMMENT 'HubSpotの物件登録日（オブジェクトの作成日）',
@@ -134,6 +165,8 @@ CREATE TABLE IF NOT EXISTS purchase_achievements (
     INDEX idx_purchase_date (purchase_date),
     INDEX idx_is_public (is_public),
     INDEX idx_created_at (created_at),
+    INDEX idx_prefecture (prefecture),
+    INDEX idx_city (city),
     
     -- インデックス（hubspot_bukken_idとhubspot_deal_idの両方が存在する場合のみ適用）
     INDEX idx_bukken_deal (hubspot_bukken_id, hubspot_deal_id)
