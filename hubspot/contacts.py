@@ -9,12 +9,31 @@ logger = logging.getLogger(__name__)
 class HubSpotContactsClient(HubSpotBaseClient):
     """HubSpot Contacts APIクライアントクラス"""
     
-    async def get_contacts(self, limit: int = 100, after: Optional[str] = None) -> Dict[str, Any]:
+    async def get_contacts(self, limit: int = 100, after: Optional[str] = None, properties: Optional[list] = None) -> Dict[str, Any]:
         """コンタクト一覧を取得"""
         try:
             params = {"limit": limit}
             if after:
                 params["after"] = after
+            
+            # 必要なプロパティを指定
+            if properties:
+                params["properties"] = ",".join(properties)
+            else:
+                # デフォルトで必要なプロパティを指定
+                params["properties"] = ",".join([
+                    "firstname",
+                    "lastname",
+                    "email",
+                    "phone",
+                    "hubspot_owner_id",
+                    "contractor_industry",
+                    "contractor_property_type",
+                    "contractor_area",
+                    "contractor_area_category",
+                    "contractor_gross2",
+                    "contractor_buy_or_sell"
+                ])
                 
             data = await self._make_request("GET", "/crm/v3/objects/contacts", params=params)
             return data

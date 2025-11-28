@@ -788,7 +788,12 @@ async def delete_hubspot_owner(owner_id: str, api_key: str = Depends(verify_api_
         raise HTTPException(status_code=500, detail=f"担当者の削除に失敗しました: {str(e)}")
 
 @app.get("/hubspot/contacts", response_model=HubSpotResponse)
-async def get_hubspot_contacts(limit: int = 100, after: Optional[str] = None, api_key: str = Depends(verify_api_key)):
+async def get_hubspot_contacts(
+    limit: int = 100, 
+    after: Optional[str] = None, 
+    properties: Optional[str] = None,
+    api_key: str = Depends(verify_api_key)
+):
     """HubSpotコンタクト一覧を取得"""
     try:
         if not Config.validate_config():
@@ -797,7 +802,12 @@ async def get_hubspot_contacts(limit: int = 100, after: Optional[str] = None, ap
                 detail="HubSpot API設定が正しくありません。環境変数を確認してください。"
             )
         
-        contacts_data = await hubspot_contacts_client.get_contacts(limit=limit, after=after)
+        # propertiesパラメータをリストに変換
+        properties_list = None
+        if properties:
+            properties_list = [p.strip() for p in properties.split(",") if p.strip()]
+        
+        contacts_data = await hubspot_contacts_client.get_contacts(limit=limit, after=after, properties=properties_list)
         return HubSpotResponse(
             status="success",
             message="コンタクト一覧を正常に取得しました",
