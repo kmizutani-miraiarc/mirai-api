@@ -918,11 +918,16 @@ async def get_satei_file(
                 with open(file_path, 'rb') as f:
                     file_content = f.read()
                 
+                # ファイル名をRFC 2231形式でエンコード（日本語対応）
+                from urllib.parse import quote
+                encoded_filename = quote(file_name, safe='')
+                content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
+                
                 return Response(
                     content=file_content,
                     media_type=mime_type or 'application/octet-stream',
                     headers={
-                        "Content-Disposition": f"inline; filename={file_name}"
+                        "Content-Disposition": content_disposition
                     }
                 )
     except HTTPException:
