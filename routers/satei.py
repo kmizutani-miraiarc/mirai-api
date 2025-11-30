@@ -49,6 +49,7 @@ async def upload_satei_property(
     email: str = Form(...),
     files: List[UploadFile] = File(...),
     property_name: Optional[str] = Form(None),
+    comment: Optional[str] = Form(None),
     api_key: dict = Depends(verify_api_key)
 ):
     """
@@ -162,6 +163,7 @@ async def upload_satei_property(
         
         # ユーザー情報を保存
         logger.info("データベース接続を開始します")
+        conn = None
         try:
             async with db_connection.get_connection() as conn:
                 logger.info("データベース接続が確立されました")
@@ -198,9 +200,9 @@ async def upload_satei_property(
                     
                     # 査定物件を作成（担当者を含む）
                     await cursor.execute("""
-                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, request_date, status)
-                        VALUES (%s, %s, %s, CURDATE(), 'parsing')
-                    """, (user_id, owner_user_id, property_name or "未設定"))
+                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, comment, request_date, status)
+                        VALUES (%s, %s, %s, %s, CURDATE(), 'parsing')
+                    """, (user_id, owner_user_id, property_name or "未設定", comment))
                     
                     satei_property_id = cursor.lastrowid
                     
@@ -208,33 +210,40 @@ async def upload_satei_property(
                     saved_files = []
                     # アップロードディレクトリを環境変数から取得（フォールバック付き）
                     upload_dir = os.getenv('SATEI_UPLOAD_DIR', '/tmp/satei_uploads')
-                    #try:
-                    #    os.makedirs(upload_dir, exist_ok=True)
-                    #    # ディレクトリの書き込み権限を確認
-                    #    test_file = os.path.join(upload_dir, '.write_test')
-                    #    try:
-                    #        with open(test_file, 'w') as f:
-                    #            f.write('test')
-                    #        os.remove(test_file)
-                    #        logger.info(f"アップロードディレクトリの書き込み権限を確認しました: {upload_dir}")
-                    #    except Exception as write_test_error:
-                    #        logger.error(f"アップロードディレクトリに書き込み権限がありません: {upload_dir}, エラー: {str(write_test_error)}")
-                    #        raise HTTPException(
-                    #            status_code=500,
-                    #            detail=f"アップロードディレクトリに書き込み権限がありません: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
-                    #        )
-                    #except PermissionError as perm_error:
-                    #    logger.info(f"アップロードディレクトリの作成に失敗しました（権限エラー）: {upload_dir}")
-                    #    raise HTTPException(
-                    #        status_code=500,
-                    #        detail=f"アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(perm_error)}"
-                    #    )
-                    #except OSError as os_error:
-                    #    logger.info(f"アップロードディレクトリの作成に失敗しました: {upload_dir}")
-                    #    raise HTTPException(
-                    #        status_code=500,
-                    #        detail=f"アップロードディレクトリの作成に失敗しました。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください: {str(os_error)}"
-                    #    )
+                    
+                    # ディレクトリの作成と書き込み権限の確認
+                    try:
+                        os.makedirs(upload_dir, exist_ok=True)
+                        logger.info(f"アップロードディレクトリを作成/確認しました: {upload_dir}")
+                        
+                        # ディレクトリの書き込み権限を確認
+                        test_file = os.path.join(upload_dir, '.write_test')
+                        try:
+                            with open(test_file, 'w') as f:
+                                f.write('test')
+                            os.remove(test_file)
+                            logger.info(f"アップロードディレクトリの書き込み権限を確認しました: {upload_dir}")
+                        except Exception as write_test_error:
+                            logger.error(f"アップロードディレクトリに書き込み権限がありません: {upload_dir}, エラー: {str(write_test_error)}")
+                            await conn.rollback()
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"アップロードディレクトリに書き込み権限がありません: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
+                            )
+                    except PermissionError as perm_error:
+                        logger.error(f"アップロードディレクトリの作成に失敗しました（権限エラー）: {upload_dir}, エラー: {str(perm_error)}")
+                        await conn.rollback()
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"アップロードディレクトリの作成に失敗しました（権限エラー）: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
+                        )
+                    except OSError as os_error:
+                        logger.error(f"アップロードディレクトリの作成に失敗しました: {upload_dir}, エラー: {str(os_error)}")
+                        await conn.rollback()
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"アップロードディレクトリの作成に失敗しました: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
+                        )
                     
                     # ファイルサイズ制限（各ファイル最大50MB、合計最大200MB）
                     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
@@ -249,6 +258,7 @@ async def upload_satei_property(
                         
                         # 各ファイルのサイズチェック
                         if file_size > MAX_FILE_SIZE:
+                            await conn.rollback()
                             raise HTTPException(
                                 status_code=413,
                                 detail=f"ファイル '{file.filename}' のサイズが大きすぎます（最大50MB）。現在のサイズ: {file_size / (1024 * 1024):.2f}MB"
@@ -256,6 +266,7 @@ async def upload_satei_property(
                         
                         # 合計サイズのチェック
                         if total_size > MAX_TOTAL_SIZE:
+                            await conn.rollback()
                             raise HTTPException(
                                 status_code=413,
                                 detail=f"アップロードファイルの合計サイズが大きすぎます（最大200MB）。現在の合計サイズ: {total_size / (1024 * 1024):.2f}MB"
@@ -320,20 +331,32 @@ async def upload_satei_property(
                         
                         # ファイルを保存（既に読み込んだ内容を使用）
                         try:
+                            # ディレクトリが存在することを再確認（念のため）
+                            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                            
                             with open(file_path, "wb") as f:
                                 f.write(file_content)
                             logger.info(f"ファイルを保存しました: {file_path} ({len(file_content)} bytes)")
                         except PermissionError as perm_error:
                             logger.error(f"ファイル保存権限エラー: {file_path}, エラー: {str(perm_error)}")
+                            await conn.rollback()
                             raise HTTPException(
                                 status_code=500,
-                                detail=f"ファイルの保存に失敗しました（権限エラー）: {str(perm_error)}"
+                                detail=f"ファイルの保存に失敗しました（権限エラー）: {str(perm_error)}。ディレクトリ '{upload_dir}' に書き込み権限があるか確認してください。"
                             )
                         except OSError as os_error:
                             logger.error(f"ファイル保存エラー: {file_path}, エラー: {str(os_error)}")
+                            await conn.rollback()
                             raise HTTPException(
                                 status_code=500,
-                                detail=f"ファイルの保存に失敗しました: {str(os_error)}"
+                                detail=f"ファイルの保存に失敗しました: {str(os_error)}。ディレクトリ '{upload_dir}' が存在し、書き込み可能であることを確認してください。"
+                            )
+                        except Exception as file_error:
+                            logger.error(f"ファイル保存予期しないエラー: {file_path}, エラー: {str(file_error)}")
+                            await conn.rollback()
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"ファイルの保存中に予期しないエラーが発生しました: {str(file_error)}"
                             )
                         
                         # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
@@ -357,8 +380,18 @@ async def upload_satei_property(
                     logger.info(f"データベースにコミットします: saved_files数={len(saved_files)}")
                     await conn.commit()
                     logger.info("データベースへのコミットが完了しました")
+        except HTTPException:
+            # HTTPExceptionはそのまま再スロー（ロールバックは既に処理済み）
+            raise
         except Exception as db_error:
             logger.error(f"データベース処理中にエラーが発生しました: {str(db_error)}", exc_info=True)
+            # トランザクションをロールバック（接続が存在する場合のみ）
+            if conn:
+                try:
+                    await conn.rollback()
+                    logger.info("エラー発生のため、トランザクションをロールバックしました")
+                except Exception as rollback_error:
+                    logger.error(f"ロールバック中にエラーが発生しました: {str(rollback_error)}")
             raise
         
         # コンタクト担当者にSlack通知を送信
@@ -851,6 +884,7 @@ class SateiPropertyUpdateRequest(BaseModel):
     estimated_price_from: Optional[float] = None
     estimated_price_to: Optional[float] = None
     comment: Optional[str] = None
+    owner_comment: Optional[str] = None
     evaluation_date: Optional[str] = None
     for_sale: Optional[bool] = None
     evaluation_result: Optional[str] = None
@@ -916,7 +950,7 @@ async def update_satei_property(
                 update_values = []
                 
                 allowed_fields = ['property_name', 'status', 'estimated_price_from', 
-                                'estimated_price_to', 'comment', 'evaluation_date',
+                                'estimated_price_to', 'comment', 'owner_comment', 'evaluation_date',
                                 'for_sale', 'evaluation_result']
                 
                 request_dict = request.dict(exclude_unset=True, exclude_none=False)
