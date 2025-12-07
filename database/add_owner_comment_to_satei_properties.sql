@@ -7,3 +7,4 @@ USE mirai_base;
 ALTER TABLE satei_properties 
 ADD COLUMN owner_comment TEXT COMMENT '担当者コメント' AFTER comment;
 
+

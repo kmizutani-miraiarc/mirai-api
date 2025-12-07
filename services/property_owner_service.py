@@ -28,15 +28,27 @@ class PropertyOwnerService:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
                 query = """
                 INSERT INTO property_owners (
-                    property_id, owner_type, owner_id, owner_name,
+                    property_id, profit_management_seq_no, owner_type, owner_id, owner_name,
                     settlement_date, price, profit_rate, profit_amount
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """
                 
+                # profit_management_seq_noを取得（オプショナルフィールド）
+                profit_management_seq_no = None
+                if hasattr(data, 'profit_management_seq_no'):
+                    profit_management_seq_no = data.profit_management_seq_no
+                elif hasattr(data, 'dict'):
+                    data_dict = data.dict()
+                    profit_management_seq_no = data_dict.get('profit_management_seq_no')
+                elif hasattr(data, 'model_dump'):
+                    data_dict = data.model_dump()
+                    profit_management_seq_no = data_dict.get('profit_management_seq_no')
+                
                 values = (
                     data.property_id,
+                    profit_management_seq_no,
                     data.owner_type.value,
                     data.owner_id,
                     data.owner_name,
@@ -71,6 +83,16 @@ class PropertyOwnerService:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
                 query = "SELECT * FROM property_owners WHERE property_id = %s ORDER BY owner_type, id"
                 await cursor.execute(query, (property_id,))
+                results = await cursor.fetchall()
+                
+                return [self._dict_to_response(result) for result in results]
+
+    async def get_property_owners_by_seq_no(self, seq_no: int) -> List[PropertyOwnerResponse]:
+        """粗利按分管理seq_noで物件担当者レコード一覧を取得"""
+        async with self.db_pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                query = "SELECT * FROM property_owners WHERE profit_management_seq_no = %s ORDER BY owner_type, id"
+                await cursor.execute(query, (seq_no,))
                 results = await cursor.fetchall()
                 
                 return [self._dict_to_response(result) for result in results]

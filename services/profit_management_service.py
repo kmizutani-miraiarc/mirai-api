@@ -30,9 +30,9 @@ class ProfitManagementService:
                 query = """
                 INSERT INTO profit_management (
                     property_id, property_name, property_type,
-                    gross_profit, profit_confirmed
+                    gross_profit, profit_confirmed, accounting_year_month
                 ) VALUES (
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s
                 )
                 """
                 
@@ -41,7 +41,8 @@ class ProfitManagementService:
                     data.property_name,
                     data.property_type,
                     data.gross_profit,
-                    data.profit_confirmed
+                    data.profit_confirmed,
+                    data.accounting_year_month
                 )
                 
                 await cursor.execute(query, values)
@@ -61,8 +62,8 @@ class ProfitManagementService:
                 
                 if result:
                     response = self._dict_to_response(result)
-                    # 物件担当者情報を取得
-                    response.owners = await self.property_owner_service.get_property_owners_by_property_id(result['property_id'])
+                    # 物件担当者情報を取得（seq_noで取得）
+                    response.owners = await self.property_owner_service.get_property_owners_by_seq_no(seq_no)
                     return response
                 return None
 
@@ -164,8 +165,8 @@ class ProfitManagementService:
                 items = []
                 for result in results:
                     response = self._dict_to_response(result)
-                    # 物件担当者情報を取得
-                    response.owners = await self.property_owner_service.get_property_owners_by_property_id(result['property_id'])
+                    # 物件担当者情報を取得（seq_noで取得）
+                    response.owners = await self.property_owner_service.get_property_owners_by_seq_no(result['seq_no'])
                     items.append(response)
                 
                 return ProfitManagementListResponse(
@@ -184,6 +185,7 @@ class ProfitManagementService:
             property_type=data['property_type'],
             gross_profit=data['gross_profit'],
             profit_confirmed=data['profit_confirmed'],
+            accounting_year_month=data.get('accounting_year_month'),
             created_at=data['created_at'],
             updated_at=data['updated_at']
         )

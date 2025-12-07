@@ -189,3 +189,66 @@ CREATE TABLE IF NOT EXISTS purchase_achievements (
     -- インデックス（hubspot_bukken_idとhubspot_deal_idの両方が存在する場合のみ適用）
     INDEX idx_bukken_deal (hubspot_bukken_id, hubspot_deal_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='物件買取実績テーブル';
+
+-- 粗利按分管理テーブル
+CREATE TABLE IF NOT EXISTS profit_management (
+    seq_no INT AUTO_INCREMENT PRIMARY KEY COMMENT '登録時自動採番する番号',
+    
+    -- 基本情報
+    property_id VARCHAR(255) NOT NULL COMMENT '物件番号（HubSpotの物件ID）',
+    property_name VARCHAR(255) NOT NULL COMMENT '物件名',
+    property_type VARCHAR(100) DEFAULT NULL COMMENT '種別',
+    
+    -- 粗利情報
+    gross_profit DECIMAL(15, 2) DEFAULT NULL COMMENT '粗利',
+    profit_confirmed BOOLEAN DEFAULT FALSE COMMENT '粗利確定',
+    
+    -- 粗利按分情報
+    purchase_owner_profit_rate DECIMAL(5, 2) DEFAULT NULL COMMENT '仕入担当粗利率(%)',
+    purchase_owner_profit DECIMAL(15, 2) DEFAULT NULL COMMENT '仕入担当粗利',
+    sales_owner_profit_rate DECIMAL(5, 2) DEFAULT NULL COMMENT '販売担当粗利率(%)',
+    sales_owner_profit DECIMAL(15, 2) DEFAULT NULL COMMENT '販売担当粗利',
+    
+    -- タイムスタンプ
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    
+    -- インデックス
+    INDEX idx_property_id (property_id),
+    INDEX idx_property_name (property_name),
+    INDEX idx_profit_confirmed (profit_confirmed),
+    INDEX idx_accounting_year_month (accounting_year_month),
+    INDEX idx_created_at (created_at),
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='粗利按分管理テーブル';
+
+-- 物件担当者テーブル
+CREATE TABLE IF NOT EXISTS property_owners (
+    id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'ID',
+    
+    -- 基本情報
+    property_id VARCHAR(255) NOT NULL COMMENT '物件番号（HubSpotの物件ID）',
+    profit_management_seq_no INT DEFAULT NULL COMMENT '粗利按分管理レコードのseq_no（外部キー）',
+    owner_type ENUM('purchase', 'sales') NOT NULL COMMENT '種別（仕入or販売）',
+    owner_id VARCHAR(255) NOT NULL COMMENT '担当者ID',
+    owner_name VARCHAR(255) NOT NULL COMMENT '担当者名',
+    
+    -- 取引情報
+    settlement_date DATE DEFAULT NULL COMMENT '決済日',
+    price DECIMAL(15, 2) DEFAULT NULL COMMENT '価格',
+    profit_rate DECIMAL(5, 2) DEFAULT NULL COMMENT '粗利率(%)',
+    profit_amount DECIMAL(15, 2) DEFAULT NULL COMMENT '粗利',
+    
+    -- タイムスタンプ
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+    
+    -- インデックス
+    INDEX idx_property_id (property_id),
+    INDEX idx_profit_management_seq_no (profit_management_seq_no),
+    INDEX idx_owner_type (owner_type),
+    INDEX idx_owner_id (owner_id),
+    INDEX idx_settlement_date (settlement_date),
+    INDEX idx_created_at (created_at),
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='物件担当者テーブル';

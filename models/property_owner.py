@@ -14,9 +14,10 @@ class OwnerType(str, Enum):
 class PropertyOwnerBase(BaseModel):
     """物件担当者の基本モデル"""
     property_id: str = Field(..., description="物件番号（HubSpotの物件ID）")
+    profit_management_seq_no: Optional[int] = Field(None, description="粗利按分管理レコードのseq_no")
     owner_type: OwnerType = Field(..., description="種別（仕入or販売）")
-    owner_id: str = Field(..., description="担当者ID")
-    owner_name: str = Field(..., description="担当者名")
+    owner_id: Optional[str] = Field(None, description="担当者ID")
+    owner_name: Optional[str] = Field(None, description="担当者名")
     settlement_date: Optional[date] = Field(None, description="決済日")
     price: Optional[Decimal] = Field(None, description="価格")
     profit_rate: Optional[Decimal] = Field(None, description="粗利率(%)")

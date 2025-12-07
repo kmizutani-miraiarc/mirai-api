@@ -12,6 +12,7 @@ class ProfitManagementBase(BaseModel):
     property_type: Optional[str] = Field(None, description="種別")
     gross_profit: Optional[Decimal] = Field(None, description="粗利")
     profit_confirmed: bool = Field(False, description="粗利確定")
+    accounting_year_month: Optional[date] = Field(None, description="計上年月（年月のみ、月初の日付）")
 
 
 class ProfitManagementCreate(ProfitManagementBase):
@@ -26,6 +27,7 @@ class ProfitManagementUpdate(BaseModel):
     property_type: Optional[str] = Field(None, description="種別")
     gross_profit: Optional[Decimal] = Field(None, description="粗利")
     profit_confirmed: Optional[bool] = Field(None, description="粗利確定")
+    accounting_year_month: Optional[date] = Field(None, description="計上年月（年月のみ、月初の日付）")
 
 
 class ProfitManagementResponse(ProfitManagementBase):
