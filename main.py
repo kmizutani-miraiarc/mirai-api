@@ -19,6 +19,7 @@ from database.gmail_credentials import gmail_credentials_manager
 from processors import DocumentProcessor, AIProcessor
 from routers.profit_management import router as profit_management_router
 from routers.profit_target import router as profit_target_router
+from routers.profit_report import router as profit_report_router
 from routers.property_owner import router as property_owner_router
 from routers.slack import router as slack_router
 from routers.satei import router as satei_router
@@ -323,6 +324,7 @@ app.add_middleware(
 # ルーターを追加
 app.include_router(profit_management_router)
 app.include_router(profit_target_router)
+app.include_router(profit_report_router)
 app.include_router(property_owner_router)
 app.include_router(slack_router)
 app.include_router(satei_router)
