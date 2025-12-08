@@ -152,7 +152,7 @@ async def search_profit_management(
 
 @router.get("/", response_model=ProfitManagementListResponse, summary="粗利按分管理レコード一覧取得")
 async def list_profit_management(
-    property_id: Optional[str] = Query(None, description="物件番号で検索"),
+    accounting_year: Optional[int] = Query(None, description="計上年で検索"),
     property_name: Optional[str] = Query(None, description="物件名で検索"),
     profit_confirmed: Optional[bool] = Query(None, description="粗利確定で検索"),
     limit: int = Query(100, description="取得件数制限"),
@@ -163,7 +163,7 @@ async def list_profit_management(
     """粗利按分管理レコードの一覧を取得します（クエリパラメータ版）"""
     try:
         search_request = ProfitManagementSearchRequest(
-            property_id=property_id,
+            accounting_year=accounting_year,
             property_name=property_name,
             profit_confirmed=profit_confirmed,
             limit=limit,

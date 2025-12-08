@@ -18,6 +18,7 @@ from database.api_keys import api_key_manager
 from database.gmail_credentials import gmail_credentials_manager
 from processors import DocumentProcessor, AIProcessor
 from routers.profit_management import router as profit_management_router
+from routers.profit_target import router as profit_target_router
 from routers.property_owner import router as property_owner_router
 from routers.slack import router as slack_router
 from routers.satei import router as satei_router
@@ -80,6 +81,10 @@ async def startup_event():
         # 物件買取実績テーブルを作成（存在しない場合）
         await create_purchase_achievements_table_if_not_exists()
         logger.info("物件買取実績テーブルの初期化が完了しました")
+        
+        # 粗利目標管理テーブルを作成（存在しない場合）
+        await create_profit_target_table_if_not_exists()
+        logger.info("粗利目標管理テーブルの初期化が完了しました")
         
     except Exception as e:
         logger.error(f"アプリケーション起動時にエラーが発生しました: {str(e)}")
@@ -236,6 +241,64 @@ async def create_purchase_achievements_table_if_not_exists():
         logger.error(f"物件買取実績テーブルの作成に失敗しました: {str(e)}")
         # テーブル作成に失敗してもアプリケーションは起動を続ける
         # （既にテーブルが存在する場合など）
+
+async def create_profit_target_table_if_not_exists():
+    """粗利目標管理テーブルが存在しない場合、作成する"""
+    try:
+        # テーブルの存在確認
+        check_query = """
+            SELECT COUNT(*) as count 
+            FROM information_schema.tables 
+            WHERE table_schema = DATABASE() 
+            AND table_name = 'profit_target'
+        """
+        result = await db_connection.execute_query(check_query)
+        
+        if result and result[0].get("count", 0) > 0:
+            logger.info("粗利目標管理テーブルは既に存在します")
+            return
+        
+        # テーブルが存在しない場合は作成
+        logger.info("粗利目標管理テーブルが存在しないため、作成します...")
+        
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS profit_target (
+            id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'ID',
+            
+            -- 基本情報
+            owner_id VARCHAR(255) NOT NULL COMMENT '担当者ID（HubSpotの担当者ID）',
+            owner_name VARCHAR(255) NOT NULL COMMENT '担当者名',
+            year INT NOT NULL COMMENT '年度',
+            
+            -- 四半期目標
+            q1_target DECIMAL(15, 2) DEFAULT NULL COMMENT '1Q目標額',
+            q2_target DECIMAL(15, 2) DEFAULT NULL COMMENT '2Q目標額',
+            q3_target DECIMAL(15, 2) DEFAULT NULL COMMENT '3Q目標額',
+            q4_target DECIMAL(15, 2) DEFAULT NULL COMMENT '4Q目標額',
+            
+            -- タイムスタンプ
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+            
+            -- インデックス
+            INDEX idx_owner_id (owner_id),
+            INDEX idx_year (year),
+            INDEX idx_owner_year (owner_id, year),
+            INDEX idx_created_at (created_at),
+            INDEX idx_updated_at (updated_at),
+            
+            -- ユニーク制約（同じ担当者・同じ年の組み合わせは1つだけ）
+            UNIQUE KEY uk_owner_year (owner_id, year)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='粗利目標管理テーブル'
+        """
+        
+        await db_connection.execute_update(create_table_sql)
+        logger.info("粗利目標管理テーブルを作成しました")
+        
+    except Exception as e:
+        logger.error(f"粗利目標管理テーブルの作成に失敗しました: {str(e)}")
+        # テーブル作成に失敗してもアプリケーションは起動を続ける
+        # （既にテーブルが存在する場合など）
         logger.warning("物件買取実績テーブルの作成をスキップします")
 
 # アプリケーション終了時のイベントハンドラー
@@ -259,6 +322,7 @@ app.add_middleware(
 
 # ルーターを追加
 app.include_router(profit_management_router)
+app.include_router(profit_target_router)
 app.include_router(property_owner_router)
 app.include_router(slack_router)
 app.include_router(satei_router)

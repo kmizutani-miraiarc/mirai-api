@@ -128,9 +128,9 @@ class ProfitManagementService:
                 where_conditions = []
                 values = []
                 
-                if search_request.property_id:
-                    where_conditions.append("property_id LIKE %s")
-                    values.append(f"%{search_request.property_id}%")
+                if search_request.accounting_year:
+                    where_conditions.append("YEAR(accounting_year_month) = %s")
+                    values.append(search_request.accounting_year)
                 
                 if search_request.property_name:
                     where_conditions.append("property_name LIKE %s")

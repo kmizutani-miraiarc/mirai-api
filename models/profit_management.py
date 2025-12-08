@@ -43,7 +43,7 @@ class ProfitManagementResponse(ProfitManagementBase):
 
 class ProfitManagementSearchRequest(BaseModel):
     """粗利按分管理検索リクエスト"""
-    property_id: Optional[str] = Field(None, description="物件番号で検索")
+    accounting_year: Optional[int] = Field(None, description="計上年で検索")
     property_name: Optional[str] = Field(None, description="物件名で検索")
     profit_confirmed: Optional[bool] = Field(None, description="粗利確定で検索")
     limit: Optional[int] = Field(100, description="取得件数制限")
