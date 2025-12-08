@@ -30,9 +30,11 @@ class ProfitManagementService:
                 query = """
                 INSERT INTO profit_management (
                     property_id, property_name, property_type,
+                    purchase_settlement_date, purchase_price,
+                    sales_settlement_date, sales_price,
                     gross_profit, profit_confirmed, accounting_year_month
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """
                 
@@ -40,6 +42,10 @@ class ProfitManagementService:
                     data.property_id,
                     data.property_name,
                     data.property_type,
+                    data.purchase_settlement_date,
+                    data.purchase_price,
+                    data.sales_settlement_date,
+                    data.sales_price,
                     data.gross_profit,
                     data.profit_confirmed,
                     data.accounting_year_month
@@ -183,6 +189,10 @@ class ProfitManagementService:
             property_id=data['property_id'],
             property_name=data['property_name'],
             property_type=data['property_type'],
+            purchase_settlement_date=data.get('purchase_settlement_date'),
+            purchase_price=data.get('purchase_price'),
+            sales_settlement_date=data.get('sales_settlement_date'),
+            sales_price=data.get('sales_price'),
             gross_profit=data['gross_profit'],
             profit_confirmed=data['profit_confirmed'],
             accounting_year_month=data.get('accounting_year_month'),

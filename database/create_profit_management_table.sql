@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS profit_management (
     property_name VARCHAR(255) NOT NULL COMMENT '物件名',
     property_type VARCHAR(100) DEFAULT NULL COMMENT '種別',
     
+    -- 仕入・販売情報
+    purchase_settlement_date DATE DEFAULT NULL COMMENT '仕入決済日',
+    purchase_price DECIMAL(15, 2) DEFAULT NULL COMMENT '仕入価格',
+    sales_settlement_date DATE DEFAULT NULL COMMENT '販売決済日',
+    sales_price DECIMAL(15, 2) DEFAULT NULL COMMENT '販売価格',
+    
     -- 粗利情報
     gross_profit DECIMAL(15, 2) DEFAULT NULL COMMENT '粗利',
     profit_confirmed BOOLEAN DEFAULT FALSE COMMENT '粗利確定',
@@ -32,6 +38,8 @@ CREATE TABLE IF NOT EXISTS profit_management (
     INDEX idx_property_name (property_name),
     INDEX idx_profit_confirmed (profit_confirmed),
     INDEX idx_accounting_year_month (accounting_year_month),
+    INDEX idx_purchase_settlement_date (purchase_settlement_date),
+    INDEX idx_sales_settlement_date (sales_settlement_date),
     INDEX idx_created_at (created_at),
     INDEX idx_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='粗利按分管理テーブル';
