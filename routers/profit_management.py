@@ -3,6 +3,9 @@ from typing import List, Optional
 from datetime import date
 from decimal import Decimal
 import logging
+import os
+import sys
+import asyncio
 
 from models.profit_management import (
     ProfitManagementCreate,
@@ -224,3 +227,92 @@ async def calculate_profit(
     except Exception as e:
         logger.error(f"粗利計算エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"粗利の計算に失敗しました: {str(e)}")
+
+
+@router.post("/sync", summary="粗利按分管理データ同期")
+async def sync_profit_management(
+    api_key_info=Depends(verify_api_key)
+):
+    """HubSpotから粗利按分管理データを取り込むバッチ処理を実行"""
+    try:
+        # バッチスクリプトのパスを取得
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_path = os.path.join(script_dir, "scripts", "sync_profit_management.py")
+        
+        logger.info(f"バッチ処理開始: script_dir={script_dir}, script_path={script_path}")
+        
+        # スクリプトが存在するか確認
+        if not os.path.exists(script_path):
+            error_msg = f"バッチスクリプトが見つかりません: {script_path}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=404,
+                detail=error_msg
+            )
+        
+        # スクリプトのディレクトリをパスに追加（インポート前に）
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+            logger.info(f"パスに追加しました: {script_dir}")
+        
+        # バックグラウンドでバッチを実行
+        async def run_sync():
+            """バッチ処理を非同期で実行"""
+            try:
+                logger.info("バッチ処理のインポートを開始します")
+                
+                # バッチスクリプトのクラスをインポート
+                try:
+                    from scripts.sync_profit_management import ProfitManagementSync
+                    logger.info("ProfitManagementSync クラスのインポートに成功しました")
+                except ImportError as e:
+                    logger.error(f"インポートエラー: {str(e)}", exc_info=True)
+                    raise
+                except Exception as e:
+                    logger.error(f"インポート時の予期しないエラー: {str(e)}", exc_info=True)
+                    raise
+                
+                # 同期処理を実行
+                logger.info("バッチ処理の実行を開始します")
+                sync = ProfitManagementSync()
+                await sync.sync()
+                
+                logger.info("バッチ処理が正常に完了しました")
+                
+            except ImportError as e:
+                logger.error(f"モジュールのインポートに失敗しました: {str(e)}", exc_info=True)
+                raise
+            except Exception as e:
+                logger.error(f"バッチ処理の実行中にエラーが発生しました: {str(e)}", exc_info=True)
+                raise
+        
+        # バックグラウンドタスクとして非同期で実行（エラーをハンドリング）
+        async def run_with_error_handling():
+            """エラーハンドリング付きでバッチ処理を実行"""
+            try:
+                await run_sync()
+            except Exception as e:
+                logger.error(f"バックグラウンドタスクの実行中にエラーが発生しました: {str(e)}", exc_info=True)
+        
+        # タスクを作成してバックグラウンドで実行
+        logger.info("バックグラウンドタスクを作成します")
+        asyncio.create_task(run_with_error_handling())
+        
+        return {
+            "status": "success",
+            "message": "バッチ処理を開始しました。バックグラウンドで実行中です。",
+            "data": {
+                "script": "sync_profit_management.py",
+                "status": "running"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_detail = f"バッチ処理の開始に失敗しました: {str(e)}"
+        logger.error(error_detail, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
+        )

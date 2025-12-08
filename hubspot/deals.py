@@ -51,7 +51,9 @@ class HubSpotDealsClient(HubSpotBaseClient):
                 "deal_farewell_date",
                 "deal_lost_date",
                 "contract_date",
-                "settlement_date"
+                "settlement_date",
+                "research_purchase_price",
+                "sales_sales_price"
             ]
             result = await self._make_request(
                 "GET", 
