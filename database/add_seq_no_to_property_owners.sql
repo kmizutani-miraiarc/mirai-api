@@ -23,3 +23,4 @@ SET po.profit_management_seq_no = pm.min_seq_no
 WHERE po.profit_management_seq_no IS NULL;
 
 
+

@@ -51,3 +51,4 @@ python3 "$SCRIPT_DIR/sync_contact_phase_summary.py"
 
 echo -e "${GREEN}実行が完了しました${NC}"
 
+

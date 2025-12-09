@@ -128,3 +128,4 @@ docker-compose exec mirai-api pip list | grep -i hubspot
 docker-compose exec mirai-api python3 -c "from database.connection import db_connection; import asyncio; asyncio.run(db_connection.test_connection())"
 ```
 
+

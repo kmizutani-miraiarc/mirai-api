@@ -33,3 +33,4 @@ CREATE TABLE IF NOT EXISTS profit_target (
     UNIQUE KEY uk_owner_year (owner_id, year)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='粗利目標管理テーブル';
 
+

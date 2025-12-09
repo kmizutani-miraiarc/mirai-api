@@ -148,3 +148,4 @@ $ python3 scripts/sync_contact_phase_summary.py
 - 大量のコンタクトがある場合、実行に時間がかかる可能性があります
 - 本番環境では、systemdタイマーを使用して自動実行することを推奨します
 
+

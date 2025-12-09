@@ -19,6 +19,15 @@ class ContactPhaseSummaryService:
         "藤村 ひかり"
     ]
     
+    # owner_idからowner_nameへのマッピング（データベースの文字化け対策）
+    OWNER_ID_TO_NAME = {
+        "75947324": "久世 健人",
+        "75947364": "赤瀬 公平",
+        "75947430": "藤森 日加里",
+        "75947440": "岩崎 陽",
+        "78042426": "藤村 ひかり"
+    }
+    
     # フェーズの順序
     PHASES = ['S', 'A', 'B', 'C', 'D', 'Z']
     
@@ -64,12 +73,12 @@ class ContactPhaseSummaryService:
         """指定した集計日のデータを取得"""
         async with self.db_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
-                # 集計データを取得
+                # 集計データを取得（owner_idとowner_nameの両方を取得）
                 query = """
-                    SELECT owner_name, buy_phase, sell_phase, count
+                    SELECT owner_id, owner_name, phase_type, phase_value, count
                     FROM contact_phase_summary
                     WHERE aggregation_date = %s
-                    ORDER BY owner_name, buy_phase, sell_phase
+                    ORDER BY owner_id, phase_type, phase_value
                 """
                 await cursor.execute(query, (aggregation_date,))
                 results = await cursor.fetchall()
@@ -82,11 +91,12 @@ class ContactPhaseSummaryService:
                     }
                 
                 # データを構造化
-                data = self._structure_data(results)
+                data, owner_id_to_name = self._structure_data(results)
                 
                 return {
                     "aggregation_date": aggregation_date.isoformat() if isinstance(aggregation_date, date) else str(aggregation_date),
-                    "data": data
+                    "data": data,
+                    "owner_id_to_name": owner_id_to_name
                 }
 
     async def get_latest_summary(self) -> Dict[str, Any]:
@@ -115,24 +125,27 @@ class ContactPhaseSummaryService:
         """指定した2つの集計日を比較"""
         async with self.db_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
-                # 現在のデータを取得
+                # 現在のデータを取得（owner_idとowner_nameの両方を取得）
                 query = """
-                    SELECT owner_name, buy_phase, sell_phase, count
+                    SELECT owner_id, owner_name, phase_type, phase_value, count
                     FROM contact_phase_summary
                     WHERE aggregation_date = %s
-                    ORDER BY owner_name, buy_phase, sell_phase
+                    ORDER BY owner_id, phase_type, phase_value
                 """
                 await cursor.execute(query, (current_date,))
                 current_results = await cursor.fetchall()
-                current_data = self._structure_data(current_results)
+                current_data, current_owner_id_to_name = self._structure_data(current_results)
                 
                 # 比較対象のデータを取得
                 await cursor.execute(query, (previous_date,))
                 previous_results = await cursor.fetchall()
-                previous_data = self._structure_data(previous_results)
+                previous_data, previous_owner_id_to_name = self._structure_data(previous_results)
                 
                 # 比較を計算
                 comparison = self._calculate_comparison(current_data, previous_data)
+                
+                # owner_id_to_nameマッピングを統合（currentを優先）
+                owner_id_to_name = {**previous_owner_id_to_name, **current_owner_id_to_name}
                 
                 return {
                     "current": {
@@ -143,7 +156,8 @@ class ContactPhaseSummaryService:
                         "aggregation_date": previous_date.isoformat() if isinstance(previous_date, date) else str(previous_date),
                         "data": previous_data
                     },
-                    "comparison": comparison
+                    "comparison": comparison,
+                    "owner_id_to_name": owner_id_to_name
                 }
 
     async def get_summary_with_comparison(self) -> Dict[str, Any]:
@@ -177,32 +191,46 @@ class ContactPhaseSummaryService:
                 
                 return await self.get_comparison(current_date, previous_date)
 
-    def _structure_data(self, results: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, int]]]:
+    def _structure_data(self, results: List[Dict[str, Any]]) -> tuple[Dict[str, Dict[str, Dict[str, int]]], Dict[str, str]]:
         """
         データを構造化
-        戻り値: {owner_name: {buy_phase: {sell_phase: count}}}
+        戻り値: ({owner_id: {phase_type: {phase_value: count}}}, {owner_id: owner_name})
+        phase_type: 'buy' または 'sell'
+        phase_value: 'S', 'A', 'B', 'C', 'D', 'Z'
         """
         data: Dict[str, Dict[str, Dict[str, int]]] = {}
-        
-        # 対象担当者を初期化
-        for owner_name in self.TARGET_OWNERS:
-            data[owner_name] = {}
-            for buy_phase in self.PHASES:
-                data[owner_name][buy_phase] = {}
-                for sell_phase in self.PHASES:
-                    data[owner_name][buy_phase][sell_phase] = 0
+        owner_id_to_name: Dict[str, str] = {}
         
         # データを設定
         for row in results:
+            owner_id = row.get('owner_id')
             owner_name = row.get('owner_name')
-            buy_phase = row.get('buy_phase')
-            sell_phase = row.get('sell_phase')
+            phase_type = row.get('phase_type')
+            phase_value = row.get('phase_value')
             count = row.get('count', 0)
             
-            if owner_name in data and buy_phase in data[owner_name] and sell_phase in data[owner_name][buy_phase]:
-                data[owner_name][buy_phase][sell_phase] = count
+            if not owner_id:
+                continue
+            
+            # 担当者IDから名前へのマッピングを保存
+            # データベースのowner_nameが文字化けしている可能性があるため、
+            # マッピングテーブルから取得する（なければデータベースの値を使用）
+            if owner_id not in owner_id_to_name:
+                owner_id_to_name[owner_id] = self.OWNER_ID_TO_NAME.get(owner_id, owner_name or owner_id)
+            
+            # データ構造を初期化（必要に応じて）
+            if owner_id not in data:
+                data[owner_id] = {'buy': {}, 'sell': {}}
+            if phase_type not in data[owner_id]:
+                data[owner_id][phase_type] = {}
+            if phase_value not in data[owner_id][phase_type]:
+                data[owner_id][phase_type][phase_value] = 0
+            
+            # データを設定
+            if phase_type in ['buy', 'sell'] and phase_value in self.PHASES:
+                data[owner_id][phase_type][phase_value] = count
         
-        return data
+        return data, owner_id_to_name
 
     def _calculate_comparison(
         self,
@@ -211,19 +239,23 @@ class ContactPhaseSummaryService:
     ) -> Dict[str, Dict[str, Dict[str, int]]]:
         """
         前週比を計算
-        戻り値: {owner_name: {buy_phase: {sell_phase: diff}}}
+        戻り値: {owner_id: {phase_type: {phase_value: diff}}}
+        phase_type: 'buy' または 'sell'
+        phase_value: 'S', 'A', 'B', 'C', 'D', 'Z'
         """
         comparison: Dict[str, Dict[str, Dict[str, int]]] = {}
         
-        for owner_name in self.TARGET_OWNERS:
-            comparison[owner_name] = {}
-            for buy_phase in self.PHASES:
-                comparison[owner_name][buy_phase] = {}
-                for sell_phase in self.PHASES:
-                    current_count = current_data.get(owner_name, {}).get(buy_phase, {}).get(sell_phase, 0)
-                    previous_count = previous_data.get(owner_name, {}).get(buy_phase, {}).get(sell_phase, 0)
+        # すべてのowner_idを取得（current_dataとprevious_dataの両方から）
+        all_owner_ids = set(current_data.keys()) | set(previous_data.keys())
+        
+        for owner_id in all_owner_ids:
+            comparison[owner_id] = {'buy': {}, 'sell': {}}
+            for phase_type in ['buy', 'sell']:
+                for phase_value in self.PHASES:
+                    current_count = current_data.get(owner_id, {}).get(phase_type, {}).get(phase_value, 0)
+                    previous_count = previous_data.get(owner_id, {}).get(phase_type, {}).get(phase_value, 0)
                     diff = current_count - previous_count
-                    comparison[owner_name][buy_phase][sell_phase] = diff
+                    comparison[owner_id][phase_type][phase_value] = diff
         
         return comparison
 

@@ -152,3 +152,4 @@ async def list_profit_target(
         logger.error(f"粗利目標レコード一覧取得エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"粗利目標レコードの一覧取得に失敗しました: {str(e)}")
 
+

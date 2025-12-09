@@ -22,6 +22,7 @@ from hubspot.config import Config
 from hubspot.contacts import HubSpotContactsClient
 from hubspot.owners import HubSpotOwnersClient
 from database.connection import get_db_pool
+import aiomysql
 
 # ログ設定
 # 本番環境とローカル環境の両方に対応
@@ -50,6 +51,9 @@ TARGET_OWNERS = [
     "藤森 日加里",
     "藤村 ひかり"
 ]
+
+# 対象担当者ID（初期化時に設定される）
+TARGET_OWNER_IDS: List[str] = []
 
 # フェーズの順序
 PHASES = ['S', 'A', 'B', 'C', 'D', 'Z']
@@ -95,8 +99,26 @@ class ContactPhaseSummarySync:
             aggregation_date = self._get_this_week_monday()
             logger.info(f"集計日: {aggregation_date}")
             
+            # 対象担当者IDが取得できているか確認
+            if not TARGET_OWNER_IDS:
+                logger.error("対象担当者IDが取得できませんでした。処理を終了します。")
+                return
+            
             # コンタクトデータを取得して集計
             phase_counts = await self._aggregate_contact_phases()
+            
+            # 集計結果を確認
+            total_count = 0
+            for owner_id in TARGET_OWNER_IDS:
+                for phase_type in ['buy', 'sell']:
+                    for phase_value in PHASES:
+                        total_count += phase_counts[owner_id].get(phase_type, {}).get(phase_value, 0)
+            
+            logger.info(f"集計結果: 合計 {total_count}件")
+            
+            if total_count == 0:
+                logger.warning("集計結果が0件です。データベースへの保存をスキップします。")
+                return
             
             # データベースに保存
             await self._save_to_database(aggregation_date, phase_counts)
@@ -119,6 +141,7 @@ class ContactPhaseSummarySync:
 
     async def _load_owners_cache(self):
         """担当者情報をキャッシュに読み込む"""
+        global TARGET_OWNER_IDS
         try:
             owners = await self.owners_client.get_owners()
             for owner in owners:
@@ -136,7 +159,18 @@ class ContactPhaseSummarySync:
                     else:
                         owner_name = owner.get("email", "")
                     self.owners_cache[owner_id] = owner_name
+                    
+                    # 対象担当者のIDをリストに追加
+                    if owner_name in TARGET_OWNERS:
+                        TARGET_OWNER_IDS.append(owner_id)
             logger.info(f"担当者キャッシュを読み込みました。件数: {len(self.owners_cache)}")
+            # デバッグ: 対象担当者のIDと名前をログ出力
+            logger.info("=== 対象担当者のIDと名前 ===")
+            for owner_id in TARGET_OWNER_IDS:
+                owner_name = self.owners_cache.get(owner_id, "不明")
+                logger.info(f"  担当者ID: {owner_id}, 担当者名: '{owner_name}'")
+            logger.info(f"対象担当者ID数: {len(TARGET_OWNER_IDS)}")
+            logger.info("=== 対象担当者のIDと名前終了 ===")
         except Exception as e:
             logger.error(f"担当者キャッシュの読み込みに失敗しました: {str(e)}")
 
@@ -277,13 +311,35 @@ class ContactPhaseSummarySync:
     async def _aggregate_contact_phases(self) -> Dict[str, Dict[str, Dict[str, int]]]:
         """
         コンタクトデータを取得してフェーズ別に集計
-        戻り値: {owner_name: {buy_phase: {sell_phase: count}}}
+        戻り値: {owner_id: {phase_type: {phase_value: count}}}
+        phase_type: 'buy' または 'sell'
+        phase_value: 'S', 'A', 'B', 'C', 'D', 'Z'（空欄の場合は集計しない）
         """
         phase_counts: Dict[str, Dict[str, Dict[str, int]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
         
-        # 対象担当者を初期化
-        for owner_name in TARGET_OWNERS:
-            phase_counts[owner_name] = defaultdict(lambda: defaultdict(int))
+        # 対象担当者IDが空の場合はエラー
+        if not TARGET_OWNER_IDS:
+            logger.error("対象担当者IDが取得できませんでした。担当者キャッシュの読み込みを確認してください。")
+            return phase_counts
+        
+        logger.info(f"対象担当者ID数: {len(TARGET_OWNER_IDS)}")
+        
+        # 対象担当者IDを初期化
+        for owner_id in TARGET_OWNER_IDS:
+            phase_counts[owner_id]['buy'] = defaultdict(int)
+            phase_counts[owner_id]['sell'] = defaultdict(int)
+        
+        # 集計統計
+        stats = {
+            "total_contacts": 0,
+            "no_owner_id": 0,
+            "owner_not_found": 0,
+            "not_target_owner": 0,
+            "no_buy_phase": 0,
+            "no_sell_phase": 0,
+            "both_phases_missing": 0,
+            "successfully_aggregated": 0
+        }
         
         # 必要なプロパティを指定（プロパティ名が確定している場合はそれを使用）
         properties = ["hubspot_owner_id"]
@@ -336,7 +392,7 @@ class ContactPhaseSummarySync:
                 
                 for contact in contacts:
                     total_contacts += 1
-                    await self._process_contact(contact, phase_counts)
+                    await self._process_contact(contact, phase_counts, stats)
                     processed_contacts += 1
                 
                 paging = response.get("paging", {})
@@ -352,25 +408,83 @@ class ContactPhaseSummarySync:
                 break
         
         logger.info(f"コンタクトの集計が完了しました。総件数: {total_contacts}, 処理件数: {processed_contacts}")
+        logger.info("=" * 80)
+        logger.info("集計統計:")
+        logger.info(f"  - 総コンタクト数: {total_contacts:,}件")
+        logger.info(f"  - 処理済みコンタクト数: {processed_contacts:,}件")
+        logger.info("")
+        logger.info("スキップ理由:")
+        logger.info(f"  - 担当者IDなし: {stats.get('no_owner_id', 0):,}件")
+        logger.info(f"  - 対象外担当者: {stats.get('not_target_owner', 0):,}件")
+        logger.info(f"  - 仕入フェーズなし: {stats.get('no_buy_phase', 0):,}件")
+        logger.info(f"  - 販売フェーズなし: {stats.get('no_sell_phase', 0):,}件")
+        logger.info(f"  - 両方のフェーズなし: {stats.get('both_phases_missing', 0):,}件")
+        logger.info("")
+        logger.info(f"  - 集計成功: {stats.get('successfully_aggregated', 0):,}件")
+        logger.info("")
+        # 検証: 合計が一致するか確認
+        total_skipped = (
+            stats.get('no_owner_id', 0) +
+            stats.get('not_target_owner', 0) +
+            stats.get('no_buy_phase', 0) +
+            stats.get('no_sell_phase', 0) +
+            stats.get('both_phases_missing', 0)
+        )
+        total_processed = total_skipped + stats.get('successfully_aggregated', 0)
+        logger.info(f"検証: スキップ合計 {total_skipped:,}件 + 集計成功 {stats.get('successfully_aggregated', 0):,}件 = {total_processed:,}件")
+        if total_processed != total_contacts:
+            logger.warning(f"⚠️  警告: 処理済み件数 ({total_processed:,}) と総件数 ({total_contacts:,}) が一致しません！")
+        else:
+            logger.info(f"✓ 検証OK: 処理済み件数と総件数が一致しています")
+        logger.info("=" * 80)
+        
+        # 集計結果のサマリーをログ出力
+        logger.info("=== 集計結果サマリー（集計後） ===")
+        total_aggregated = 0
+        for owner_id in TARGET_OWNER_IDS:
+            owner_name = self.owners_cache.get(owner_id, owner_id)
+            owner_total = 0
+            for phase_type in ['buy', 'sell']:
+                for phase_value in PHASES:
+                    owner_total += phase_counts[owner_id].get(phase_type, {}).get(phase_value, 0)
+            total_aggregated += owner_total
+            if owner_total > 0:
+                logger.info(f"担当者: {owner_name} (ID: {owner_id}) - 合計 {owner_total}件")
+        logger.info(f"全体の集計件数: {total_aggregated}件")
+        logger.info("=== 集計結果サマリー終了 ===")
+        
         return phase_counts
 
     async def _process_contact(
         self,
         contact: Dict[str, Any],
-        phase_counts: Dict[str, Dict[str, Dict[str, int]]]
+        phase_counts: Dict[str, Dict[str, Dict[str, int]]],
+        stats: Dict[str, int]
     ):
         """1件のコンタクトを処理してフェーズ集計に追加"""
         properties = contact.get("properties", {})
+        stats["total_contacts"] += 1
         
         # 担当者IDを取得
         owner_id = properties.get("hubspot_owner_id")
         if not owner_id:
+            stats["no_owner_id"] += 1
             return
         
-        # 担当者名を取得
-        owner_name = await self._get_owner_name(owner_id)
-        if not owner_name or owner_name not in TARGET_OWNERS:
+        # 対象担当者IDかチェック
+        if owner_id not in TARGET_OWNER_IDS:
+            stats["not_target_owner"] += 1
+            # デバッグ: 対象外担当者の場合（最初の数件のみ）
+            if not hasattr(self, '_debug_owner_count'):
+                self._debug_owner_count = 0
+            if self._debug_owner_count < 10:
+                owner_name = self.owners_cache.get(owner_id, "不明")
+                logger.debug(f"コンタクト {contact.get('id', 'unknown')}: 対象外担当者 '{owner_name}' (ID: {owner_id})")
+                self._debug_owner_count += 1
             return
+        
+        # 担当者名を取得（表示用）
+        owner_name = self.owners_cache.get(owner_id, owner_id)
         
         # フェーズを取得（ラベルから取得したプロパティ名を使用）
         buy_phase_raw = None
@@ -427,9 +541,20 @@ class ContactPhaseSummarySync:
             if not phase_value:
                 return None
             
+            # まず大文字に変換してチェック（最もシンプルなケース）
+            phase_value_upper = phase_value.upper()
+            if phase_value_upper in PHASES:
+                return phase_value_upper
+            
             # マッピングから変換を試みる（ラベルや値からフェーズ値への変換）
             if phase_value in value_map:
                 mapped_value = value_map[phase_value]
+                if mapped_value in PHASES:
+                    return mapped_value
+            
+            # 大文字に変換した値もマッピングをチェック
+            if phase_value_upper in value_map:
+                mapped_value = value_map[phase_value_upper]
                 if mapped_value in PHASES:
                     return mapped_value
             
@@ -438,14 +563,10 @@ class ContactPhaseSummarySync:
             if extracted and extracted in PHASES:
                 return extracted
             
-            # 大文字に変換してチェック
-            phase_value_upper = phase_value.upper()
-            
-            # 有効なフェーズ値かチェック
-            if phase_value_upper in PHASES:
-                return phase_value_upper
-            
             # 無効な値の場合はNone（集計対象外）
+            # デバッグ: 正規化できなかった値をログ出力（特定の担当者の場合）
+            if owner_name == "岩崎 陽" and phase_type == "buy":
+                logger.warning(f"  フェーズ正規化失敗: {phase_type}_phase_raw='{phase_value}' (type: {type(phase_value)}) を正規化できませんでした。")
             return None
         
         buy_phase = normalize_phase(buy_phase_raw, self.buy_phase_value_map, "buy")
@@ -455,19 +576,36 @@ class ContactPhaseSummarySync:
         if self._debug_count <= 20:
             logger.info(f"  正規化後: buy_phase={buy_phase}, sell_phase={sell_phase}")
         
-        # 両方のフェーズが有効な値の場合のみ集計に追加
-        # 空欄（None）の場合は集計対象外
-        if buy_phase is not None and sell_phase is not None:
-            phase_counts[owner_name][buy_phase][sell_phase] += 1
+        # どちらか一方でも有効な値があれば集計対象にする
+        # 空欄（None）のフェーズは無視する（カウントしない）
+        if buy_phase is None and sell_phase is None:
+            # 両方とも空欄の場合は集計対象外
+            stats["both_phases_missing"] += 1
+            if owner_name == "岩崎 陽":
+                logger.info(f"  スキップ: コンタクト {contact_id} - buy_phaseが空欄 (raw: {buy_phase_raw}), sell_phaseが空欄 (raw: {sell_phase_raw})")
         else:
-            # デバッグ: スキップされた理由をログ出力
-            if self._debug_count <= 20:
-                skip_reason = []
-                if buy_phase is None:
-                    skip_reason.append("buy_phaseが空欄")
-                if sell_phase is None:
-                    skip_reason.append("sell_phaseが空欄")
-                logger.info(f"  スキップ: {', '.join(skip_reason)}")
+            # どちらか一方でも有効な値があれば集計
+            # 空欄のフェーズは無視する（集計しない）
+            
+            # 仕入フェーズが有効な場合：仕入フェーズを集計
+            if buy_phase is not None:
+                phase_counts[owner_id]['buy'][buy_phase] += 1
+                stats["successfully_aggregated"] += 1
+                if owner_name == "岩崎 陽" and buy_phase == "S":
+                    logger.info(f"  集計: コンタクト {contact_id} - 担当者: {owner_name} (ID: {owner_id}), 仕入フェーズ: {buy_phase}")
+            
+            # 販売フェーズが有効な場合：販売フェーズを集計
+            if sell_phase is not None:
+                phase_counts[owner_id]['sell'][sell_phase] += 1
+                stats["successfully_aggregated"] += 1
+                if owner_name == "岩崎 陽" and sell_phase == "S":
+                    logger.info(f"  集計: コンタクト {contact_id} - 担当者: {owner_name} (ID: {owner_id}), 販売フェーズ: {sell_phase}")
+            
+            # 統計を更新（空欄のフェーズがある場合）
+            if buy_phase is None:
+                stats["no_buy_phase"] += 1
+            if sell_phase is None:
+                stats["no_sell_phase"] += 1
 
     async def _save_to_database(
         self,
@@ -476,7 +614,7 @@ class ContactPhaseSummarySync:
     ):
         """集計結果をデータベースに保存"""
         async with self.db_pool.acquire() as conn:
-            async with conn.cursor() as cursor:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
                 # 既存のデータを削除（同じ集計日のデータ）
                 delete_query = """
                     DELETE FROM contact_phase_summary
@@ -487,26 +625,51 @@ class ContactPhaseSummarySync:
                 logger.info(f"既存データを削除しました。件数: {deleted_count}")
                 
                 # 新しいデータを挿入
-                insert_query = """
-                    INSERT INTO contact_phase_summary
-                    (aggregation_date, owner_name, buy_phase, sell_phase, count)
-                    VALUES (%s, %s, %s, %s, %s)
-                """
+                try:
+                    insert_query = """
+                        INSERT INTO contact_phase_summary
+                        (aggregation_date, owner_id, owner_name, phase_type, phase_value, count)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """
+                    
+                    insert_count = 0
+                    for owner_id in TARGET_OWNER_IDS:
+                        owner_name = self.owners_cache.get(owner_id, owner_id)
+                        # phase_type: 'buy' または 'sell'
+                        for phase_type in ['buy', 'sell']:
+                            # phase_value: 'S', 'A', 'B', 'C', 'D', 'Z'
+                            for phase_value in PHASES:
+                                count = phase_counts[owner_id].get(phase_type, {}).get(phase_value, 0)
+                                if count > 0:
+                                    await cursor.execute(
+                                        insert_query,
+                                        (aggregation_date, owner_id, owner_name, phase_type, phase_value, count)
+                                    )
+                                    insert_count += 1
+                    
+                    await conn.commit()
+                    logger.info(f"データベースに保存しました。件数: {insert_count}")
+                except Exception as e:
+                    logger.error(f"データベースへの保存中にエラーが発生しました: {str(e)}", exc_info=True)
+                    await conn.rollback()
+                    raise
                 
-                insert_count = 0
-                for owner_name in TARGET_OWNERS:
-                    for buy_phase in PHASES:
-                        for sell_phase in PHASES:
-                            count = phase_counts[owner_name][buy_phase][sell_phase]
-                            if count > 0:
-                                await cursor.execute(
-                                    insert_query,
-                                    (aggregation_date, owner_name, buy_phase, sell_phase, count)
-                                )
-                                insert_count += 1
-                
-                await conn.commit()
-                logger.info(f"データベースに保存しました。件数: {insert_count}")
+                # 集計結果のサマリーをログ出力
+                logger.info("=== 集計結果サマリー ===")
+                for owner_id in TARGET_OWNER_IDS:
+                    owner_name = self.owners_cache.get(owner_id, owner_id)
+                    logger.info(f"担当者: {owner_name} (ID: {owner_id})")
+                    for phase_type in ['buy', 'sell']:
+                        phase_type_display = "仕入" if phase_type == 'buy' else "販売"
+                        phase_dict = phase_counts[owner_id].get(phase_type, {})
+                        total = sum(phase_dict.values())
+                        if total > 0:
+                            logger.info(f"  {phase_type_display}フェーズ: 合計 {total}件")
+                            for phase_value in PHASES:
+                                count = phase_dict.get(phase_value, 0)
+                                if count > 0:
+                                    logger.info(f"    - {phase_value}: {count}件")
+                logger.info("=== 集計結果サマリー終了 ===")
 
 
 async def main():

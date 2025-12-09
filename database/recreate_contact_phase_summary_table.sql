@@ -1,11 +1,14 @@
--- コンタクトフェーズ集計テーブル作成スクリプト
+-- コンタクトフェーズ集計テーブルを削除して再作成
 -- データベース: mirai_base
 -- 新しい構造: phase_type（仕入/販売）とphase_value（S, A, B, C, D, Z）で1レコードに1つのフェーズを保存
 
 USE mirai_base;
 
--- コンタクトフェーズ集計テーブル
-CREATE TABLE IF NOT EXISTS contact_phase_summary (
+-- 既存のテーブルを削除
+DROP TABLE IF EXISTS contact_phase_summary;
+
+-- 新しいテーブル構造で作成
+CREATE TABLE contact_phase_summary (
     id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'ID',
     
     -- 集計情報
@@ -38,5 +41,4 @@ CREATE TABLE IF NOT EXISTS contact_phase_summary (
     -- ユニーク制約（同じ集計日、担当者、フェーズ区分、フェーズ値の組み合わせは1つだけ）
     UNIQUE KEY uk_aggregation_owner_phase (aggregation_date, owner_id, phase_type, phase_value)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='コンタクトフェーズ集計テーブル';
-
 

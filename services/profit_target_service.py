@@ -177,3 +177,4 @@ class ProfitTargetService:
             updated_at=data['updated_at']
         )
 
+
