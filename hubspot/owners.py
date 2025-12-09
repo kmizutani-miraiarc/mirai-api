@@ -45,7 +45,9 @@ class HubSpotOwnersClient(HubSpotBaseClient):
                         logger.error(f"Rate limit exceeded for owner {owner_id} after {max_retries} attempts")
                         return None
                 elif e.response.status_code == 404:
-                    logger.warning(f"Owner {owner_id} not found")
+                    # 404エラーは無視（削除された担当者など、正常なケース）
+                    # ログレベルをDEBUGに変更（必要に応じてINFOに戻す）
+                    logger.debug(f"Owner {owner_id} not found (404)")
                     return None
                 else:
                     logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")

@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from .client import HubSpotBaseClient
 
 # ロガー設定
@@ -110,3 +110,48 @@ class HubSpotContactsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to delete contact {contact_id}: {str(e)}")
             return False
+    
+    async def get_contact_properties(self) -> List[Dict[str, Any]]:
+        """コンタクトの全プロパティ情報を取得"""
+        try:
+            data = await self._make_request("GET", "/crm/v3/properties/contacts")
+            return data.get("results", [])
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                logger.error("HubSpot API認証エラー: 有効なAPIキーを設定してください")
+            else:
+                logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to get contact properties: {str(e)}")
+            return []
+    
+    async def find_property_by_label(self, label: str) -> Optional[str]:
+        """ラベル名からプロパティの内部名を取得"""
+        try:
+            properties = await self.get_contact_properties()
+            for prop in properties:
+                prop_label = prop.get("label", "")
+                if prop_label == label:
+                    return prop.get("name")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to find property by label {label}: {str(e)}")
+            return None
+    
+    async def get_property_options(self, property_name: str) -> Optional[List[Dict[str, Any]]]:
+        """プロパティの選択肢（オプション）を取得"""
+        try:
+            data = await self._make_request("GET", f"/crm/v3/properties/contacts/{property_name}")
+            if data and "options" in data:
+                return data.get("options", [])
+            return []
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.warning(f"Property {property_name} not found")
+            else:
+                logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get property options for {property_name}: {str(e)}")
+            return None
