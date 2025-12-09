@@ -1,0 +1,11 @@
+[Unit]
+Description=Contact Scoring Summary Sync Timer
+Requires=contact-scoring-summary-sync.service
+
+[Timer]
+OnCalendar=Mon *-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
