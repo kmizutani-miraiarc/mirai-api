@@ -29,3 +29,4 @@ ALTER TABLE profit_management
 ADD INDEX idx_sales_settlement_date (sales_settlement_date);
 
 
+

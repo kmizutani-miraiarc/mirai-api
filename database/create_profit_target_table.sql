@@ -34,3 +34,4 @@ CREATE TABLE IF NOT EXISTS profit_target (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='粗利目標管理テーブル';
 
 
+

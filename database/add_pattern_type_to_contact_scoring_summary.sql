@@ -24,3 +24,4 @@ ADD UNIQUE KEY uk_aggregation_owner_pattern (aggregation_date, owner_id, pattern
 ALTER TABLE contact_scoring_summary
 ADD INDEX idx_pattern_type (pattern_type);
 
+

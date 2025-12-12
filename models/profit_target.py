@@ -57,3 +57,4 @@ class ProfitTargetListResponse(BaseModel):
     offset: int = Field(..., description="オフセット")
 
 
+

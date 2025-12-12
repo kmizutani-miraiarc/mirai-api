@@ -27,3 +27,4 @@ ALTER TABLE contact_phase_summary
 ADD INDEX idx_aggregation_date_owner (aggregation_date, owner_id);
 
 
+

@@ -42,3 +42,4 @@ CREATE TABLE contact_phase_summary (
     UNIQUE KEY uk_aggregation_owner_phase (aggregation_date, owner_id, phase_type, phase_value)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='コンタクトフェーズ集計テーブル';
 
+

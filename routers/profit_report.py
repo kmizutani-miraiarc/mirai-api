@@ -78,3 +78,4 @@ async def get_profit_report(
         raise HTTPException(status_code=500, detail=f"粗利集計レポートの取得に失敗しました: {str(e)}")
 
 
+

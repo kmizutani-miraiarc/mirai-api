@@ -149,3 +149,4 @@ $ python3 scripts/sync_contact_phase_summary.py
 - 本番環境では、systemdタイマーを使用して自動実行することを推奨します
 
 
+

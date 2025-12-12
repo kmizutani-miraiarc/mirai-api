@@ -98,9 +98,14 @@ async def upload_satei_property(
                 contact = search_contacts[0]
                 properties = contact.get("properties", {})
                 
+                # Noneを空文字列に変換してから結合
+                lastname = properties.get("lastname") or ""
+                firstname = properties.get("firstname") or ""
+                full_name = (lastname + " " + firstname).strip() or None
+                
                 contact_info = {
                     "contact_id": contact.get("id"),
-                    "name": (properties.get("lastname", "") + " " + properties.get("firstname", "")).strip() or None,
+                    "name": full_name,
                     "owner_id": properties.get("hubspot_owner_id"),
                     "owner_name": None
                 }
@@ -117,9 +122,14 @@ async def upload_satei_property(
                 logger.info(f"コンタクト確認: {contact_email}")
                 
                 if contact_email == email:
+                    # Noneを空文字列に変換してから結合
+                    lastname = properties.get("lastname") or ""
+                    firstname = properties.get("firstname") or ""
+                    full_name = (lastname + " " + firstname).strip() or None
+                    
                     contact_info = {
                         "contact_id": contact.get("id"),
-                        "name": (properties.get("lastname", "") + " " + properties.get("firstname", "")).strip() or None,
+                        "name": full_name,
                         "owner_id": properties.get("hubspot_owner_id"),
                         "owner_name": properties.get("hs_analytics_first_visit_url")
                     }
