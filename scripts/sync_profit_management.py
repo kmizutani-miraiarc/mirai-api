@@ -2,7 +2,7 @@
 """
 粗利按分管理データ同期バッチ処理スクリプト
 1日1回、午前2時に実行される
-販売取引の決済日（settlement_date）が入力されている物件情報を対象に、
+販売取引の決済日（settlement_date）または契約日（contract_date）が入力されている物件情報を対象に、
 HubSpotから粗利按分管理データを取り込む
 """
 
@@ -60,8 +60,8 @@ class ProfitManagementSync:
         self.owner_service = None
         self.owners_cache = {}  # 担当者名のキャッシュ
     
-    async def get_sales_deals_with_settlement_date(self) -> List[Dict[str, Any]]:
-        """販売パイプラインで決済日が設定されている取引を取得"""
+    async def get_sales_deals_with_settlement_or_contract_date(self) -> List[Dict[str, Any]]:
+        """販売パイプラインで決済日または契約日が設定されている取引を取得"""
         try:
             all_deals = []
             after = None
@@ -85,6 +85,7 @@ class ProfitManagementSync:
                         "dealstage",
                         "pipeline",
                         "settlement_date",
+                        "contract_date",
                         "hubspot_owner_id",
                         "sales_sales_price",
                         "research_purchase_price"
@@ -112,15 +113,16 @@ class ProfitManagementSync:
             
             logger.info(f"販売パイプラインの取引を {len(all_deals)} 件取得しました")
             
-            # settlement_dateが設定されている取引のみをフィルタリング
+            # settlement_dateまたはcontract_dateが設定されている取引のみをフィルタリング
             filtered_deals = []
             for deal in all_deals:
                 properties = deal.get("properties", {})
                 settlement_date = properties.get("settlement_date")
-                if settlement_date and settlement_date.strip():
+                contract_date = properties.get("contract_date")
+                if (settlement_date and settlement_date.strip()) or (contract_date and contract_date.strip()):
                     filtered_deals.append(deal)
             
-            logger.info(f"決済日が設定されている取引を {len(filtered_deals)} 件抽出しました")
+            logger.info(f"決済日または契約日が設定されている取引を {len(filtered_deals)} 件抽出しました")
             return filtered_deals
             
         except Exception as e:
@@ -282,13 +284,17 @@ class ProfitManagementSync:
             sales_properties = sales_deal.get("properties", {})
             sales_settlement_date_str = sales_properties.get("settlement_date")
             sales_settlement_date = self.parse_date(sales_settlement_date_str)
+            sales_contract_date_str = sales_properties.get("contract_date")
+            sales_contract_date = self.parse_date(sales_contract_date_str)
             sales_price = self.parse_decimal(sales_properties.get("sales_sales_price"))
             sales_owner_id = sales_properties.get("hubspot_owner_id")
             
-            # 計上年月を取得（販売決済日の年月）
+            # 計上年月を取得（決済日を優先、なければ契約日の年月）
             accounting_year_month = None
             if sales_settlement_date:
                 accounting_year_month = date(sales_settlement_date.year, sales_settlement_date.month, 1)
+            elif sales_contract_date:
+                accounting_year_month = date(sales_contract_date.year, sales_contract_date.month, 1)
             
             # 物件に紐づく仕入取引を取得
             purchase_deals = await self.get_deals_by_bukken_and_pipeline(bukken_id, PURCHASE_PIPELINE_ID)
@@ -472,8 +478,8 @@ class ProfitManagementSync:
             self.profit_service = ProfitManagementService(db_connection.pool)
             self.owner_service = PropertyOwnerService(db_connection.pool)
             
-            # 販売パイプラインで決済日が設定されている取引を取得
-            sales_deals = await self.get_sales_deals_with_settlement_date()
+            # 販売パイプラインで決済日または契約日が設定されている取引を取得
+            sales_deals = await self.get_sales_deals_with_settlement_or_contract_date()
             
             if not sales_deals:
                 logger.info("対象取引が見つかりませんでした")
