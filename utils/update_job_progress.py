@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""
+バッチジョブの進捗を更新するヘルパーモジュール
+バッチ処理スクリプトから使用する
+"""
+import os
+import sys
+import asyncio
+import logging
+from pathlib import Path
+from typing import Optional
+
+# プロジェクトルートをパスに追加
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from services.batch_job_queue import BatchJobQueue
+
+logger = logging.getLogger(__name__)
+
+
+async def update_progress(
+    job_id: Optional[int],
+    progress_message: Optional[str] = None,
+    progress_percentage: Optional[int] = None
+):
+    """
+    バッチジョブの進捗を更新
+    
+    Args:
+        job_id: ジョブID（環境変数BATCH_JOB_IDから取得可能）
+        progress_message: 進捗メッセージ
+        progress_percentage: 進捗パーセンテージ（0-100）
+    """
+    if job_id is None:
+        # 環境変数から取得を試みる
+        job_id = os.environ.get('BATCH_JOB_ID')
+        if job_id:
+            try:
+                job_id = int(job_id)
+            except ValueError:
+                logger.warning(f"無効なBATCH_JOB_ID: {job_id}")
+                return
+    
+    if job_id is None:
+        logger.warning("job_idが指定されていません。進捗を更新できません。")
+        return
+    
+    try:
+        queue = BatchJobQueue()
+        success = await queue.update_job_progress(job_id, progress_message, progress_percentage)
+        if success:
+            logger.info(f"進捗を更新しました: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
+        else:
+            logger.error(f"進捗の更新に失敗しました: job_id={job_id}")
+    except Exception as e:
+        logger.error(f"進捗の更新中にエラーが発生しました: {str(e)}", exc_info=True)
+
+
+def update_progress_sync(
+    job_id: Optional[int],
+    progress_message: Optional[str] = None,
+    progress_percentage: Optional[int] = None
+):
+    """
+    バッチジョブの進捗を更新（同期版）
+    
+    Args:
+        job_id: ジョブID（環境変数BATCH_JOB_IDから取得可能）
+        progress_message: 進捗メッセージ
+        progress_percentage: 進捗パーセンテージ（0-100）
+    """
+    asyncio.run(update_progress(job_id, progress_message, progress_percentage))
+

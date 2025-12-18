@@ -234,6 +234,47 @@ class BatchJobQueue:
             logger.error(f"ジョブステータスの更新に失敗しました: {str(e)}", exc_info=True)
             return False
     
+    async def update_job_progress(
+        self,
+        job_id: int,
+        progress_message: Optional[str] = None,
+        progress_percentage: Optional[int] = None
+    ) -> bool:
+        """
+        ジョブの進捗を更新
+        
+        Args:
+            job_id: ジョブID
+            progress_message: 進捗メッセージ
+            progress_percentage: 進捗パーセンテージ（0-100）
+            
+        Returns:
+            成功時True、失敗時False
+        """
+        try:
+            await db_connection.create_pool()
+            if not db_connection.pool:
+                logger.error("データベース接続プールが作成されていません")
+                return False
+            
+            async with db_connection.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 進捗パーセンテージの範囲チェック
+                    if progress_percentage is not None:
+                        progress_percentage = max(0, min(100, progress_percentage))
+                    
+                    await cursor.execute("""
+                        UPDATE batch_job_queue
+                        SET progress_message = %s, progress_percentage = %s
+                        WHERE id = %s
+                    """, (progress_message, progress_percentage, job_id))
+                    
+                    await conn.commit()
+                    return True
+        except Exception as e:
+            logger.error(f"ジョブ進捗の更新に失敗しました: {str(e)}", exc_info=True)
+            return False
+    
     async def increment_retry_count(self, job_id: int) -> bool:
         """
         リトライ回数をインクリメント

@@ -90,6 +90,72 @@ async def add_batch_job_to_queue(
     except Exception as e:
         error_detail = f"バッチジョブの追加中にエラーが発生しました: {str(e)}"
         logger.error(error_detail, exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail
+            )
+
+
+@router.post("/progress", summary="バッチジョブの進捗を更新")
+async def update_batch_job_progress(
+    request: Dict[str, Any],
+    api_key_info=Depends(verify_api_key)
+):
+    """
+    バッチジョブの進捗を更新
+    
+    Args:
+        request: リクエストボディ（job_id, progress_message, progress_percentageを含む）
+        api_key_info: APIキー情報
+        
+    Returns:
+        更新結果
+    """
+    try:
+        job_id = request.get('job_id')
+        progress_message = request.get('progress_message')
+        progress_percentage = request.get('progress_percentage')
+        
+        if not job_id:
+            raise HTTPException(
+                status_code=400,
+                detail="job_id is required"
+            )
+        
+        # 進捗パーセンテージの範囲チェック
+        if progress_percentage is not None:
+            if not isinstance(progress_percentage, int) or progress_percentage < 0 or progress_percentage > 100:
+                raise HTTPException(
+                    status_code=400,
+                    detail="progress_percentage must be an integer between 0 and 100"
+                )
+        
+        # バッチジョブキューで進捗を更新
+        queue = BatchJobQueue()
+        success = await queue.update_job_progress(job_id, progress_message, progress_percentage)
+        
+        if success:
+            logger.info(f"バッチジョブの進捗を更新しました: job_id={job_id}, progress={progress_percentage}%")
+            return {
+                "status": "success",
+                "message": "バッチジョブの進捗を更新しました",
+                "data": {
+                    "job_id": job_id,
+                    "progress_message": progress_message,
+                    "progress_percentage": progress_percentage
+                }
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="バッチジョブの進捗更新に失敗しました"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_detail = f"バッチジョブの進捗更新中にエラーが発生しました: {str(e)}"
+        logger.error(error_detail, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=error_detail

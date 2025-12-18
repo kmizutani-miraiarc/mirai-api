@@ -204,13 +204,17 @@ class BatchJobWorker:
             else:
                 working_dir = str(PROJECT_ROOT)
             
-            # 非同期でスクリプトを実行
+            # 非同期でスクリプトを実行（環境変数にジョブIDを設定）
+            env = os.environ.copy()
+            env['BATCH_JOB_ID'] = str(job_id)
+            
             process = await asyncio.create_subprocess_exec(
                 self.python_path,
                 script_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir
+                cwd=working_dir,
+                env=env
             )
             
             logger.info(f"プロセスを開始しました: PID {process.pid} (ジョブID: {job_id})")
