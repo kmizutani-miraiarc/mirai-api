@@ -484,6 +484,7 @@ class ProfitManagementSync:
                     # 担当者情報の保存に失敗しても、メインデータは保存されているので続行
             else:
                 # 既存データのため、担当者情報は更新しない
+                pass
             
             logger.info(f"取引 {deal_id} の処理が完了しました (物件: {bukken_id}, {bukken_name})")
             return True
