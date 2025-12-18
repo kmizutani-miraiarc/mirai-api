@@ -1,0 +1,11 @@
+[Unit]
+Description=Profit Management Sync Timer
+Requires=profit-management-sync.service
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

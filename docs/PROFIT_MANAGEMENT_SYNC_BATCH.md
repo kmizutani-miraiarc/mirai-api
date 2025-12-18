@@ -6,7 +6,7 @@
 
 ## 実行タイミング
 
-1日1回、午前2時に自動実行されます。
+1日1回、午前2時に自動実行されます（systemdタイマーを使用）。
 
 ## 取り込み条件
 
@@ -47,30 +47,74 @@
 
 ## 手動実行
 
+### 方法1: systemdサービスとして実行（推奨）
+
+```bash
+# systemdサービスとして実行
+sudo systemctl start profit-management-sync.service
+
+# ログを確認
+sudo journalctl -u profit-management-sync.service -f
+```
+
+### 方法2: 直接Pythonスクリプトを実行
+
 ```bash
 cd /var/www/mirai-api
-python3 scripts/sync_profit_management.py
+sudo -u mirai-api /var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/sync_profit_management.py
 ```
 
-## crontab設定
+## systemdタイマーの設定
 
-以下のコマンドでcrontabに追加してください：
+### サービスとタイマーファイルの配置
 
+```bash
+# サービスファイルをコピー
+sudo cp profit-management-sync.service /etc/systemd/system/
+sudo cp profit-management-sync.timer /etc/systemd/system/
+
+# systemdの設定をリロード
+sudo systemctl daemon-reload
+
+# タイマーを有効化
+sudo systemctl enable profit-management-sync.timer
+sudo systemctl start profit-management-sync.timer
+```
+
+### タイマーの状態確認
+
+```bash
+# タイマーの状態を確認
+systemctl status profit-management-sync.timer
+
+# 次回実行時刻を確認
+systemctl list-timers profit-management-sync.timer
+```
+
+### タイマーの無効化（必要に応じて）
+
+```bash
+# タイマーを停止・無効化
+sudo systemctl stop profit-management-sync.timer
+sudo systemctl disable profit-management-sync.timer
+```
+
+## 旧crontab設定からの移行
+
+以前crontabで設定していた場合は、以下の手順で移行してください：
+
+1. **crontabの設定を確認**
+```bash
+crontab -l | grep sync_profit_management
+```
+
+2. **crontabから削除**
 ```bash
 crontab -e
+# 該当行を削除
 ```
 
-以下の行を追加：
-
-```
-0 2 * * * cd /var/www/mirai-api && /usr/bin/python3 scripts/sync_profit_management.py >> /var/www/mirai-api/logs/profit_management_sync_cron.log 2>&1
-```
-
-または、既存のcrontabに追加する場合：
-
-```bash
-(crontab -l 2>/dev/null; echo "0 2 * * * cd /var/www/mirai-api && /usr/bin/python3 scripts/sync_profit_management.py >> /var/www/mirai-api/logs/profit_management_sync_cron.log 2>&1") | crontab -
-```
+3. **systemdタイマーを設定**（上記の「systemdタイマーの設定」を参照）
 
 ## 注意事項
 
