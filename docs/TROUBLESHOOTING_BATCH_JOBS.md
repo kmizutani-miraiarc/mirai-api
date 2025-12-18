@@ -289,3 +289,127 @@ logger.info(f"ファイルディスクリプタ数: {fd_count}")
 logger.info(f"データベース接続プールサイズ: {db_connection.pool.size if db_connection.pool else 0}")
 ```
 
+## 本番サーバーでの「第六竹石マンション」問題の確認方法
+
+### 1. 実行中のプロセスを確認
+
+```bash
+# バッチ処理プロセスのPIDを取得
+ps aux | grep sync_profit_management | grep -v grep
+
+# プロセスの状態を確認（S=スリープ、R=実行中、D=ディスク待ち、Z=ゾンビ）
+ps -p <PID> -o pid,state,etime,cmd
+
+# プロセスがブロックしているか確認（D状態の場合はI/O待ち）
+ps -p <PID> -o pid,state,wchan
+```
+
+### 2. ログを確認
+
+```bash
+# 「第六竹石マンション」で検索
+grep -A 50 "第六竹石" /var/www/mirai-api/logs/profit_management_sync.log | tail -100
+
+# 最後のログエントリを確認
+tail -100 /var/www/mirai-api/logs/profit_management_sync.log
+
+# ワーカーのログを確認
+tail -100 /var/www/mirai-api/logs/batch_job_worker.log
+```
+
+### 3. プロセスのスタックトレースを確認
+
+```bash
+# プロセスのスタックトレースを取得（Pythonプロセスの場合）
+sudo gdb -p <PID> -batch -ex "thread apply all bt" 2>&1 | head -100
+
+# または、py-spyを使用（インストールが必要）
+sudo py-spy record -o /tmp/profile.svg --pid <PID> --duration 60
+```
+
+### 4. システムコールをトレース
+
+```bash
+# 実行中のプロセスをトレース
+sudo strace -p <PID> -f -e trace=network,file,process -o /tmp/strace_output.txt
+
+# 新しいプロセスをトレース（ジョブをキューに追加してから実行）
+sudo strace -f -e trace=network,file,process -o /tmp/strace_batch.txt \
+  /var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/sync_profit_management.py
+```
+
+### 5. ネットワーク接続を確認
+
+```bash
+# プロセスのネットワーク接続を確認
+sudo netstat -anp | grep <PID>
+sudo ss -anp | grep <PID>
+
+# HubSpot APIへの接続を確認
+sudo tcpdump -i any -n host api.hubapi.com -c 100 -w /tmp/hubspot_traffic.pcap
+```
+
+### 6. メモリとファイルディスクリプタを確認
+
+```bash
+# プロセスのメモリ使用量を確認
+cat /proc/<PID>/status | grep -E "VmSize|VmRSS|VmPeak|VmData|VmStk"
+
+# ファイルディスクリプタ数を確認
+ls -l /proc/<PID>/fd | wc -l
+
+# ファイルディスクリプタの詳細を確認
+ls -l /proc/<PID>/fd | head -20
+```
+
+### 7. データベース接続を確認
+
+```bash
+# MySQLに接続
+mysql -u root -p mirai_base
+
+# 実行中のクエリを確認
+SHOW PROCESSLIST;
+
+# ロックを確認
+SHOW ENGINE INNODB STATUS\G
+
+# 特定のテーブルのロックを確認
+SELECT * FROM information_schema.INNODB_LOCKS WHERE lock_table LIKE '%profit_management%';
+SELECT * FROM information_schema.INNODB_LOCK_WAITS;
+```
+
+### 8. 環境変数の違いを確認
+
+```bash
+# ワーカープロセスの環境変数を確認
+sudo cat /proc/$(pgrep -f batch_job_worker)/environ | tr '\0' '\n' | sort
+
+# 手動実行時の環境変数を確認
+env | sort
+
+# 環境変数の違いを比較
+diff <(sudo cat /proc/$(pgrep -f batch_job_worker)/environ | tr '\0' '\n' | sort) \
+     <(env | sort)
+```
+
+### 9. プロセスのシグナルを確認
+
+```bash
+# プロセスにシグナルを送信して状態を確認（SIGUSR1など）
+sudo kill -USR1 <PID>
+
+# プロセスのシグナルマスクを確認
+cat /proc/<PID>/status | grep Sig
+```
+
+### 10. イベントループの状態を確認（Pythonの場合）
+
+```bash
+# Pythonプロセスのスタックトレースを取得
+sudo gdb -p <PID> -batch -ex "py-bt" 2>&1 | head -100
+
+# または、py-spyを使用
+sudo py-spy dump --pid <PID>
+```
+

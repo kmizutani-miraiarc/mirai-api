@@ -167,13 +167,18 @@ class HubSpotDealsClient(HubSpotBaseClient):
                 logger.info(f"Found {len(company_ids)} company associations for deal {deal_id}")
                 
                 # 各会社の詳細情報を取得（レート制限対策付き）
+                logger.info(f"Getting company details for deal {deal_id}: {len(company_ids)} companies")
                 for i, company_id in enumerate(company_ids):
+                    logger.debug(f"Getting company {i+1}/{len(company_ids)}: {company_id}")
                     try:
                         # レート制限対策: 複数リクエストの間に少し待機
                         if i > 0 and i % 5 == 0:
                             await asyncio.sleep(0.1)  # 100ms待機
                             
+                        logger.debug(f"Requesting company {company_id} details...")
+                        logger.debug(f"Requesting company {company_id} details...")
                         company = await self._make_request("GET", f"/crm/v3/objects/companies/{company_id}")
+                        logger.debug(f"Received company {company_id} details, appending to associations")
                         associations["companies"].append(company)
                         logger.debug(f"Successfully retrieved company {company_id}")
                     except httpx.HTTPStatusError as e:
@@ -194,13 +199,16 @@ class HubSpotDealsClient(HubSpotBaseClient):
             except Exception as e:
                 logger.warning(f"Failed to get company associations for deal {deal_id}: {str(e)}")
             
+            logger.info(f"Completed company associations for deal {deal_id}, starting contact associations")
             # コンタクトの関連を取得
             try:
+                logger.info(f"Requesting contact associations for deal {deal_id}")
                 contact_result = await self._make_request(
                     "GET", 
                     f"/crm/v4/objects/deals/{deal_id}/associations/contacts",
                     params={"limit": 100}
                 )
+                logger.info(f"Received contact associations response for deal {deal_id}")
                 contact_ids = [assoc.get("toObjectId") for assoc in contact_result.get("results", [])]
                 logger.info(f"Found {len(contact_ids)} contact associations for deal {deal_id}")
                 
@@ -466,12 +474,15 @@ class HubSpotDealsClient(HubSpotBaseClient):
                 logger.info(f"Processing batch {i//batch_size + 1}: deals {i+1}-{min(i+batch_size, len(deal_ids))}")
                 
                 # バッチ内で並列処理
+                logger.info(f"Starting parallel processing for batch {i//batch_size + 1}: {len(batch_deal_ids)} deals")
                 batch_tasks = []
                 for deal_id in batch_deal_ids:
                     batch_tasks.append(self.get_deal_by_id_with_associations(deal_id))
                 
                 try:
+                    logger.info(f"Waiting for batch {i//batch_size + 1} to complete...")
                     batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                    logger.info(f"Batch {i//batch_size + 1} completed: {len(batch_results)} results")
                     
                     successful_count = 0
                     for result in batch_results:
