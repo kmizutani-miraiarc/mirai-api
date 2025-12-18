@@ -308,6 +308,16 @@ class BatchJobWorker:
                 # プロセスが完了した場合
                 stdout, stderr = await communicate_task
                 
+                # プロセスの終了を確実に待機
+                if process.returncode is None:
+                    logger.info(f"プロセスの出力読み取りが完了しましたが、プロセスがまだ実行中です。終了を待機します (ジョブID: {job_id})")
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"プロセスの終了待ちがタイムアウトしました。強制終了します (ジョブID: {job_id})")
+                        process.kill()
+                        await process.wait()
+                
                 elapsed_time = asyncio.get_event_loop().time() - start_time
                 
                 # 停止が要求された場合

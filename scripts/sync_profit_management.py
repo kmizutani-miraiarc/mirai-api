@@ -35,14 +35,23 @@ else:
     log_dir = '/var/www/mirai-api/logs'
 os.makedirs(log_dir, exist_ok=True)
 
+# ログハンドラーのバッファリングを無効化
+file_handler = logging.FileHandler(os.path.join(log_dir, 'profit_management_sync.log'))
+file_handler.setLevel(logging.INFO)
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.INFO)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, 'profit_management_sync.log')),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, stream_handler],
+    force=True
 )
+
+# ログの即時フラッシュを有効化
+import sys
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, 'reconfigure') else None
 logger = logging.getLogger(__name__)
 
 # パイプラインID

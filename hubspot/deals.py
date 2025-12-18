@@ -240,21 +240,18 @@ class HubSpotDealsClient(HubSpotBaseClient):
                     params={"limit": 100}
                 )
                 bukken_ids = [assoc.get("toObjectId") for assoc in bukken_result.get("results", [])]
-                logger.info(f"Found {len(bukken_ids)} bukken associations for deal {deal_id}")
+                logger.debug(f"Found {len(bukken_ids)} bukken associations for deal {deal_id}")
                 
                 # 各物件の詳細情報を取得（レート制限対策付き）
-                logger.info(f"Starting to retrieve {len(bukken_ids)} bukken details for deal {deal_id}")
                 for i, bukken_id in enumerate(bukken_ids):
-                    logger.info(f"Retrieving bukken {i+1}/{len(bukken_ids)}: {bukken_id}")
                     try:
                         # レート制限対策: 複数リクエストの間に少し待機
                         if i > 0 and i % 5 == 0:
                             await asyncio.sleep(0.1)  # 100ms待機
                             
                         bukken = await self._make_request("GET", f"/crm/v3/objects/2-39155607/{bukken_id}")
-                        logger.info(f"Retrieved bukken {bukken_id} data, size: {len(str(bukken))} chars")
                         associations["2-39155607"].append(bukken)
-                        logger.info(f"Successfully appended bukken {bukken_id} to associations")
+                        logger.debug(f"Successfully retrieved bukken {bukken_id}")
                     except httpx.HTTPStatusError as e:
                         if e.response.status_code == 429:  # レート制限
                             logger.warning(f"Rate limit hit for bukken {bukken_id}, waiting...")
@@ -276,8 +273,7 @@ class HubSpotDealsClient(HubSpotBaseClient):
         except Exception as e:
             logger.error(f"Failed to get associations for deal {deal_id}: {str(e)}")
         
-        logger.info(f"Completed retrieving associations for deal {deal_id}")
-        logger.info(f"Associations summary for deal {deal_id}: {len(associations['companies'])} companies, {len(associations['contacts'])} contacts, {len(associations['2-39155607'])} bukken")
+        logger.debug(f"Associations summary for deal {deal_id}: {len(associations['companies'])} companies, {len(associations['contacts'])} contacts, {len(associations['2-39155607'])} bukken")
         return associations
     
     async def create_deal(self, deal_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
