@@ -68,24 +68,70 @@ jobs:
           sudo venv/bin/pip install --upgrade pip
           sudo venv/bin/pip install -r requirements.txt
           
+          # サービスファイルをコピーしてsystemdをリロード
+          if [ -f "mirai-api.service" ]; then
+            echo "Copying service file..."
+            sudo cp mirai-api.service /etc/systemd/system/
+            sudo systemctl daemon-reload
+            echo "Service file copied and systemd reloaded"
+          else
+            echo "Warning: mirai-api.service not found in repository"
+          fi
+          
           # アプリケーションを起動
+          echo "Starting mirai-api service..."
           sudo systemctl start mirai-api
           sudo systemctl enable mirai-api
           
-          # ヘルスチェック
-          sleep 10
-          if curl -f http://127.0.0.1:8000/health; then
-            echo "Deployment successful!"
-          else
-            echo "Deployment failed - health check failed"
+          # サービスの状態を確認
+          echo "Checking service status..."
+          sudo systemctl status mirai-api --no-pager -l || true
+          
+          # ログを確認
+          echo "Recent service logs:"
+          sudo journalctl -u mirai-api -n 50 --no-pager || true
+          
+          # ヘルスチェック（複数回リトライ）
+          echo "Performing health check..."
+          HEALTH_CHECK_PASSED=false
+          for i in {1..10}; do
+            sleep 3
+            if curl -f http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "Health check passed on attempt $i!"
+              HEALTH_CHECK_PASSED=true
+              break
+            else
+              echo "Health check failed (attempt $i/10), retrying in 3 seconds..."
+              # サービスが停止している場合は再起動を試みる
+              if ! sudo systemctl is-active --quiet mirai-api; then
+                echo "Service is not active, attempting restart..."
+                sudo systemctl restart mirai-api
+                sleep 5
+                # 再起動後のログを確認
+                sudo journalctl -u mirai-api -n 20 --no-pager || true
+              fi
+            fi
+          done
+          
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "Deployment failed - health check failed after 10 attempts"
+            echo "Service status:"
+            sudo systemctl status mirai-api --no-pager -l || true
+            echo "Recent logs:"
+            sudo journalctl -u mirai-api -n 100 --no-pager || true
+            echo "Checking if port 8000 is in use:"
+            sudo netstat -tlnp | grep 8000 || sudo ss -tlnp | grep 8000 || echo "Port 8000 is not in use"
             # ロールバック
-            sudo systemctl stop mirai-api
-            if [ -f "backups/app.backup.*.tar.gz" ]; then
+            sudo systemctl stop mirai-api || true
+            if ls backups/app.backup.*.tar.gz 1> /dev/null 2>&1; then
               LATEST_BACKUP=$(ls -t backups/app.backup.*.tar.gz | head -1)
+              echo "Rolling back to: $LATEST_BACKUP"
               sudo tar -xzf "$LATEST_BACKUP"
               sudo systemctl start mirai-api
             fi
             exit 1
+          else
+            echo "Deployment successful!"
           fi
         
     - name: Notify deployment status
