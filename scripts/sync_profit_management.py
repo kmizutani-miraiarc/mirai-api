@@ -60,6 +60,9 @@ logging.basicConfig(
 # httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# hubspot.dealsのログレベルをWARNINGに設定（INFO/DEBUGログを削除）
+logging.getLogger("hubspot.deals").setLevel(logging.WARNING)
+
 # ログの即時フラッシュを有効化
 import sys
 if hasattr(sys.stdout, 'reconfigure'):

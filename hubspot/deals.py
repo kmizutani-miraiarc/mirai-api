@@ -6,6 +6,8 @@ from .client import HubSpotBaseClient
 
 # ロガー設定
 logger = logging.getLogger(__name__)
+# hubspot.dealsのログレベルをWARNINGに設定（INFO/DEBUGログを削除）
+logger.setLevel(logging.WARNING)
 
 class HubSpotDealsClient(HubSpotBaseClient):
     """HubSpot取引APIクライアントクラス"""

@@ -36,6 +36,9 @@ logging.basicConfig(level=logging.INFO)
 # httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# hubspot.dealsのログレベルをWARNINGに設定（INFO/DEBUGログを削除）
+logging.getLogger("hubspot.deals").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # API認証の依存関数
