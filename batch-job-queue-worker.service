@@ -1,17 +1,19 @@
 [Unit]
-Description=Contact Phase Summary Sync Service (Monthly)
-After=network.target
+Description=Batch Job Queue Worker
+After=network.target mysql.service
 
 [Service]
-Type=oneshot
+Type=simple
 User=mirai-api
 Group=mirai-api
 WorkingDirectory=/var/www/mirai-api
 Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
-ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/queue_batch_job.py contact-phase-summary-monthly
+ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/batch_job_worker.py
+Restart=always
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=contact-phase-summary-monthly-sync
+SyslogIdentifier=batch-job-queue-worker
 
 # セキュリティ設定
 NoNewPrivileges=true

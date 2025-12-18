@@ -8,7 +8,7 @@ User=mirai-api
 Group=mirai-api
 WorkingDirectory=/var/www/mirai-api
 Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
-ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/update_contact_sales_badge.py
+ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/queue_batch_job.py contact-sales-badge
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=contact-sales-badge

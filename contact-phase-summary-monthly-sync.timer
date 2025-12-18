@@ -3,7 +3,7 @@ Description=Contact Phase Summary Sync Timer (Monthly)
 Requires=contact-phase-summary-monthly-sync.service
 
 [Timer]
-OnCalendar=*-*-01 03:00:00
+OnCalendar=*-*-* 02:00:00
 Persistent=true
 
 [Install]

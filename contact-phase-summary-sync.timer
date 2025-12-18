@@ -1,9 +1,9 @@
 [Unit]
-Description=Contact Phase Summary Sync Timer
+Description=Contact Phase Summary Sync Timer (Deprecated - Use batch-job-queue-scheduler)
 Requires=contact-phase-summary-sync.service
 
 [Timer]
-OnCalendar=Mon *-*-* 03:00:00
+OnCalendar=Mon *-*-* 02:00:00
 Persistent=true
 
 [Install]

@@ -1,6 +1,6 @@
 [Unit]
-Description=Purchase Achievements Sync Timer
-Requires=purchase-achievements-sync.service
+Description=Batch Job Queue Scheduler Timer
+Requires=batch-job-queue-scheduler.service
 
 [Timer]
 OnCalendar=*-*-* 02:00:00
@@ -8,7 +8,4 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
-
-
-
 

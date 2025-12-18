@@ -8,7 +8,7 @@ User=mirai-api
 Group=mirai-api
 WorkingDirectory=/var/www/mirai-api
 Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
-ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/sync_purchase_achievements.py
+ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/queue_batch_job.py purchase-achievements
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=purchase-achievements-sync
