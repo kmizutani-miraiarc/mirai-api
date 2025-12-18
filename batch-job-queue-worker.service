@@ -4,8 +4,8 @@ After=network.target mysql.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=mirai-api
+Group=mirai-api
 WorkingDirectory=/var/www/mirai-api
 Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
 ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/batch_job_worker.py
