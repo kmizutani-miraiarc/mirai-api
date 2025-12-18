@@ -90,10 +90,10 @@ async def add_batch_job_to_queue(
     except Exception as e:
         error_detail = f"バッチジョブの追加中にエラーが発生しました: {str(e)}"
         logger.error(error_detail, exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=error_detail
-            )
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
+        )
 
 
 @router.post("/progress", summary="バッチジョブの進捗を更新")
