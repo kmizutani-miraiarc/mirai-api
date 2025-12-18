@@ -42,13 +42,9 @@ class HubSpotBaseClient:
                 if not response.content:
                     return {"success": True}
                 
-                # 大きなJSONレスポンスのパースを別スレッドで実行してイベントループをブロックしないようにする
-                try:
-                    return await asyncio.to_thread(response.json)
-                except AttributeError:
-                    # Python 3.9未満の場合は通常のjson()を使用
-                    import json
-                    return await asyncio.to_thread(json.loads, response.content)
+                # httpxのresponse.json()は既に最適化されており、通常は高速
+                # 大きなJSONレスポンスの場合でも、同期的に実行しても問題ない
+                return response.json()
             except httpx.HTTPStatusError as e:
                 logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
                 raise

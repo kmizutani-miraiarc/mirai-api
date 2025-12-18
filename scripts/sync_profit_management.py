@@ -50,8 +50,11 @@ logging.basicConfig(
 
 # ログの即時フラッシュを有効化
 import sys
-sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
-sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, 'reconfigure') else None
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(line_buffering=True)
+
 logger = logging.getLogger(__name__)
 
 # パイプラインID
