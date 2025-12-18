@@ -34,6 +34,10 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+# httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # 仕入パイプラインID

@@ -7,6 +7,9 @@ from .config import Config
 # ロガー設定
 logger = logging.getLogger(__name__)
 
+# httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 class HubSpotBaseClient:
     """HubSpot API基底クライアントクラス"""
     

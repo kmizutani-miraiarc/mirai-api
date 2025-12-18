@@ -57,6 +57,9 @@ logging.basicConfig(
     force=True
 )
 
+# httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # ログの即時フラッシュを有効化
 import sys
 if hasattr(sys.stdout, 'reconfigure'):

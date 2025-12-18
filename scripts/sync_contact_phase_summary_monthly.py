@@ -42,6 +42,9 @@ logging.basicConfig(
         logging.FileHandler(os.path.join(log_dir, "contact_phase_summary_monthly.log"))
     ]
 )
+
+# httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("contact_phase_summary_monthly")
 
 # 対象担当者名（姓名）

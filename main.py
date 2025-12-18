@@ -32,6 +32,10 @@ from routers.batch_jobs import router as batch_jobs_router
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
+
+# httpxのログレベルをWARNINGに設定（HTTP Requestログを削除）
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # API認証の依存関数
