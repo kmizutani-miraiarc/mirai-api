@@ -5,8 +5,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=mirai-api
-Group=mirai-api
+User=root
+Group=root
 WorkingDirectory=/var/www/mirai-api
 Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
 ExecStart=/var/www/mirai-api/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
