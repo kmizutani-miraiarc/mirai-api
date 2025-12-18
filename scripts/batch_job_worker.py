@@ -276,7 +276,7 @@ class BatchJobWorker:
                                 # 残りの出力を読み取る
                                 try:
                                     while True:
-                                        chunk = await asyncio.wait_for(process.stdout.read(4096), timeout=0.1)
+                                        chunk = await asyncio.wait_for(process.stdout.read(16384), timeout=0.1)
                                         if not chunk:
                                             break
                                         stdout_chunks.append(chunk)
@@ -285,7 +285,7 @@ class BatchJobWorker:
                                 break
                             
                             try:
-                                chunk = await asyncio.wait_for(process.stdout.read(4096), timeout=1.0)
+                                chunk = await asyncio.wait_for(process.stdout.read(16384), timeout=0.5)
                                 if not chunk:
                                     # EOFに達した場合、少し待機してから終了
                                     await asyncio.sleep(0.1)
@@ -306,7 +306,7 @@ class BatchJobWorker:
                                 # 残りの出力を読み取る
                                 try:
                                     while True:
-                                        chunk = await asyncio.wait_for(process.stderr.read(4096), timeout=0.1)
+                                        chunk = await asyncio.wait_for(process.stderr.read(16384), timeout=0.1)
                                         if not chunk:
                                             break
                                         stderr_chunks.append(chunk)
@@ -315,7 +315,7 @@ class BatchJobWorker:
                                 break
                             
                             try:
-                                chunk = await asyncio.wait_for(process.stderr.read(4096), timeout=1.0)
+                                chunk = await asyncio.wait_for(process.stderr.read(16384), timeout=0.5)
                                 if not chunk:
                                     # EOFに達した場合、少し待機してから終了
                                     await asyncio.sleep(0.1)
