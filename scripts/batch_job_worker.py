@@ -204,12 +204,14 @@ class BatchJobWorker:
             else:
                 working_dir = str(PROJECT_ROOT)
             
-            # 非同期でスクリプトを実行（環境変数にジョブIDを設定）
+            # 非同期でスクリプトを実行（環境変数にジョブIDを設定、バッファリングを無効化）
             env = os.environ.copy()
             env['BATCH_JOB_ID'] = str(job_id)
+            env['PYTHONUNBUFFERED'] = '1'  # Pythonの出力バッファリングを無効化
             
             process = await asyncio.create_subprocess_exec(
                 self.python_path,
+                '-u',  # バッファリングを無効化
                 script_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -225,7 +227,36 @@ class BatchJobWorker:
             
             try:
                 # プロセスの完了を待機しながら、定期的に停止チェックとタイムアウトチェックを行う
-                # process.communicate()を使用してプロセスの完了を待つ
+                # 出力をストリーミングで読み取り、プロセスの完了をprocess.wait()で待つ
+                stdout_chunks = []
+                stderr_chunks = []
+                
+                async def read_stdout():
+                    """標準出力を読み取る"""
+                    try:
+                        while True:
+                            chunk = await process.stdout.read(4096)
+                            if not chunk:
+                                break
+                            stdout_chunks.append(chunk)
+                            # リアルタイムでログに出力（オプション）
+                            # text = chunk.decode('utf-8', errors='replace')
+                            # if text.strip():
+                            #     logger.debug(f"ジョブ出力 (ジョブID: {job_id}): {text}")
+                    except Exception as e:
+                        logger.warning(f"標準出力の読み取り中にエラーが発生しました (ジョブID: {job_id}): {str(e)}")
+                
+                async def read_stderr():
+                    """標準エラー出力を読み取る"""
+                    try:
+                        while True:
+                            chunk = await process.stderr.read(4096)
+                            if not chunk:
+                                break
+                            stderr_chunks.append(chunk)
+                    except Exception as e:
+                        logger.warning(f"標準エラー出力の読み取り中にエラーが発生しました (ジョブID: {job_id}): {str(e)}")
+                
                 async def check_stop_and_timeout():
                     """停止チェックとタイムアウトチェックを行うタスク"""
                     while True:
@@ -249,13 +280,15 @@ class BatchJobWorker:
                         if process.returncode is not None:
                             return 'done'
                 
-                # プロセスの完了を待機するタスクと、停止チェック・タイムアウトチェックのタスクを並行実行
-                communicate_task = asyncio.create_task(process.communicate())
+                # 出力読み取りタスクと停止チェック・タイムアウトチェックのタスクを並行実行
+                stdout_task = asyncio.create_task(read_stdout())
+                stderr_task = asyncio.create_task(read_stderr())
                 check_task = asyncio.create_task(check_stop_and_timeout())
+                wait_task = asyncio.create_task(process.wait())
                 
-                # どちらかが完了するまで待機
+                # どれかが完了するまで待機
                 done, pending = await asyncio.wait(
-                    [communicate_task, check_task],
+                    [wait_task, check_task],
                     return_when=asyncio.FIRST_COMPLETED
                 )
                 
@@ -267,10 +300,17 @@ class BatchJobWorker:
                     except asyncio.CancelledError:
                         pass
                 
+                # 出力読み取りタスクの完了を待つ
+                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                
+                # 出力を結合
+                stdout = b''.join(stdout_chunks) if stdout_chunks else b''
+                stderr = b''.join(stderr_chunks) if stderr_chunks else b''
+                
                 # 結果を取得
-                if communicate_task in done:
+                if wait_task in done:
                     # プロセスが完了した
-                    stdout, stderr = await communicate_task
+                    returncode = await wait_task
                     elapsed_time = asyncio.get_event_loop().time() - start_time
                     
                     # 出力をログに記録（デバッグ用）
@@ -284,12 +324,12 @@ class BatchJobWorker:
                         if stderr_text.strip():
                             logger.warning(f"ジョブの標準エラー出力 (ジョブID: {job_id}):\n{stderr_text}")
                     
-                    if process.returncode == 0:
+                    if returncode == 0:
                         logger.info(f"ジョブが正常に完了しました (ジョブID: {job_id}, 経過時間: {elapsed_time:.1f}秒)")
                         return {'success': True}
                     else:
                         error_output = stderr.decode('utf-8', errors='replace') if stderr else 'Unknown error'
-                        logger.error(f"ジョブの実行に失敗しました (ジョブID: {job_id}, 終了コード: {process.returncode}): {error_output}")
+                        logger.error(f"ジョブの実行に失敗しました (ジョブID: {job_id}, 終了コード: {returncode}): {error_output}")
                         # stdoutにもエラー情報がある可能性がある
                         if stdout:
                             stdout_text = stdout.decode('utf-8', errors='replace')
