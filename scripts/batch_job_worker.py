@@ -224,13 +224,86 @@ class BatchJobWorker:
             start_time = asyncio.get_event_loop().time()
             
             try:
-                # タイムアウト付きでプロセス完了を待機
-                while True:
-                    # タイムアウトチェック
+                # プロセスの完了を待機しながら、定期的に停止チェックとタイムアウトチェックを行う
+                # process.communicate()を使用してプロセスの完了を待つ
+                async def check_stop_and_timeout():
+                    """停止チェックとタイムアウトチェックを行うタスク"""
+                    while True:
+                        await asyncio.sleep(2)  # 2秒ごとにチェック
+                        
+                        # タイムアウトチェック
+                        elapsed_time = asyncio.get_event_loop().time() - start_time
+                        if elapsed_time > timeout:
+                            logger.warning(f"ジョブがタイムアウトしました (ジョブID: {job_id}, 経過時間: {elapsed_time:.1f}秒)")
+                            process.terminate()
+                            return 'timeout'
+                        
+                        # ジョブが停止されているかチェック
+                        is_stopped = await self.queue.is_job_stopped(job_id)
+                        if is_stopped:
+                            logger.info(f"ジョブが停止されました。プロセスを終了します: {job_id}")
+                            process.terminate()
+                            return 'stopped'
+                        
+                        # プロセスが既に終了している場合は終了
+                        if process.returncode is not None:
+                            return 'done'
+                
+                # プロセスの完了を待機するタスクと、停止チェック・タイムアウトチェックのタスクを並行実行
+                communicate_task = asyncio.create_task(process.communicate())
+                check_task = asyncio.create_task(check_stop_and_timeout())
+                
+                # どちらかが完了するまで待機
+                done, pending = await asyncio.wait(
+                    [communicate_task, check_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # 未完了のタスクをキャンセル
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                
+                # 結果を取得
+                if communicate_task in done:
+                    # プロセスが完了した
+                    stdout, stderr = await communicate_task
                     elapsed_time = asyncio.get_event_loop().time() - start_time
-                    if elapsed_time > timeout:
-                        logger.warning(f"ジョブがタイムアウトしました (ジョブID: {job_id}, 経過時間: {elapsed_time:.1f}秒)")
-                        process.terminate()
+                    
+                    # 出力をログに記録（デバッグ用）
+                    if stdout:
+                        stdout_text = stdout.decode('utf-8', errors='replace')
+                        if stdout_text.strip():
+                            logger.info(f"ジョブの標準出力 (ジョブID: {job_id}):\n{stdout_text}")
+                    
+                    if stderr:
+                        stderr_text = stderr.decode('utf-8', errors='replace')
+                        if stderr_text.strip():
+                            logger.warning(f"ジョブの標準エラー出力 (ジョブID: {job_id}):\n{stderr_text}")
+                    
+                    if process.returncode == 0:
+                        logger.info(f"ジョブが正常に完了しました (ジョブID: {job_id}, 経過時間: {elapsed_time:.1f}秒)")
+                        return {'success': True}
+                    else:
+                        error_output = stderr.decode('utf-8', errors='replace') if stderr else 'Unknown error'
+                        logger.error(f"ジョブの実行に失敗しました (ジョブID: {job_id}, 終了コード: {process.returncode}): {error_output}")
+                        # stdoutにもエラー情報がある可能性がある
+                        if stdout:
+                            stdout_text = stdout.decode('utf-8', errors='replace')
+                            if stdout_text.strip():
+                                error_output += f"\n標準出力: {stdout_text}"
+                        return {
+                            'success': False,
+                            'error': error_output
+                        }
+                else:
+                    # 停止またはタイムアウト
+                    result = await check_task
+                    if result == 'timeout':
+                        # プロセスの終了を待機
                         try:
                             await asyncio.wait_for(process.wait(), timeout=5.0)
                         except asyncio.TimeoutError:
@@ -241,48 +314,18 @@ class BatchJobWorker:
                             'success': False,
                             'error': f'ジョブがタイムアウトしました (制限時間: {timeout}秒)'
                         }
-                    
-                    # ジョブが停止されているかチェック
-                    is_stopped = await self.queue.is_job_stopped(job_id)
-                    if is_stopped:
-                        logger.info(f"ジョブが停止されました。プロセスを終了します: {job_id}")
-                        process.terminate()
+                    elif result == 'stopped':
+                        # プロセスの終了を待機
                         try:
                             await asyncio.wait_for(process.wait(), timeout=5.0)
                         except asyncio.TimeoutError:
                             logger.warning(f"プロセスの終了待ちがタイムアウトしました。強制終了します (ジョブID: {job_id})")
                             process.kill()
                             await process.wait()
-                        stopped = True
-                        break
-                    
-                    # プロセスの状態をチェック
-                    if process.returncode is not None:
-                        # プロセスが終了した
-                        break
-                    
-                    # 少し待機してから再チェック
-                    await asyncio.sleep(2)
-                
-                if stopped:
-                    return {
-                        'success': False,
-                        'error': '手動で停止されました'
-                    }
-                
-                # プロセスの出力を取得
-                stdout, stderr = await process.communicate()
-                
-                if process.returncode == 0:
-                    logger.info(f"ジョブが正常に完了しました (ジョブID: {job_id}, 経過時間: {elapsed_time:.1f}秒)")
-                    return {'success': True}
-                else:
-                    error_output = stderr.decode('utf-8') if stderr else 'Unknown error'
-                    logger.error(f"ジョブの実行に失敗しました (ジョブID: {job_id}): {error_output}")
-                    return {
-                        'success': False,
-                        'error': error_output
-                    }
+                        return {
+                            'success': False,
+                            'error': '手動で停止されました'
+                        }
             except asyncio.CancelledError:
                 logger.warning(f"ジョブの実行がキャンセルされました (ジョブID: {job_id})")
                 process.terminate()
