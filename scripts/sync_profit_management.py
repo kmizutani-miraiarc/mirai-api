@@ -384,14 +384,27 @@ class ProfitManagementSync:
                 )
                 
                 logger.debug(f"物件 {bukken_id} ({bukken_name}) の作成処理を開始します")
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成処理を開始します（データベース接続前）")
+                # デバッグ: プロセスのリソース使用状況を確認
+                try:
+                    import psutil
+                    import os
+                    process = psutil.Process(os.getpid())
+                    mem_info = process.memory_info()
+                    logger.info(f"メモリ使用量: RSS={mem_info.rss / 1024 / 1024:.2f}MB, VMS={mem_info.vms / 1024 / 1024:.2f}MB")
+                    fd_count = len(os.listdir(f'/proc/{os.getpid()}/fd'))
+                    logger.info(f"ファイルディスクリプタ数: {fd_count}")
+                except Exception:
+                    pass
+                
                 created = await self.profit_service.create_profit_management(create_data)
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の作成処理が完了しました: created={created is not None}")
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成処理が完了しました: created={created is not None}")
                 if not created:
                     logger.error(f"物件 {bukken_id} の作成に失敗しました")
                     return False
                 
                 seq_no = created.seq_no
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の作成が成功しました (seq_no: {seq_no})")
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成が成功しました (seq_no: {seq_no})")
             
             # 物件担当者情報を保存（編集可能項目は保持）
             logger.debug(f"物件 {bukken_id} ({bukken_name}) の担当者情報保存処理を開始します (seq_no: {seq_no})")
