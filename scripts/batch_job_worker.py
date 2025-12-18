@@ -209,15 +209,28 @@ class BatchJobWorker:
             env['BATCH_JOB_ID'] = str(job_id)
             env['PYTHONUNBUFFERED'] = '1'  # Pythonの出力バッファリングを無効化
             
+            # 出力を一時ファイルにリダイレクト（バッファ溢れを防ぐ）
+            stdout_file = os.path.join(log_dir, f'batch_job_{job_id}_stdout.log')
+            stderr_file = os.path.join(log_dir, f'batch_job_{job_id}_stderr.log')
+            
+            # ファイルを開く
+            stdout_fd = os.open(stdout_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+            stderr_fd = os.open(stderr_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+            
             process = await asyncio.create_subprocess_exec(
                 self.python_path,
                 '-u',  # バッファリングを無効化
                 script_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stdout=stdout_fd,
+                stderr=stderr_fd,
                 cwd=working_dir,
-                env=env
+                env=env,
+                pass_fds=[]  # ファイルディスクリプタを継承
             )
+            
+            # ファイルディスクリプタを閉じる（プロセスが継承するため）
+            os.close(stdout_fd)
+            os.close(stderr_fd)
             
             logger.info(f"プロセスを開始しました: PID {process.pid} (ジョブID: {job_id})")
             
@@ -263,74 +276,6 @@ class BatchJobWorker:
                 # 停止チェック・タイムアウトチェックのタスクを開始
                 check_task = asyncio.create_task(check_stop_and_timeout())
                 
-                # 出力を読み取るタスク（非ブロッキング）
-                stdout_chunks = []
-                stderr_chunks = []
-                
-                async def read_stdout():
-                    """標準出力を読み取る"""
-                    try:
-                        while True:
-                            # プロセスが終了しているかチェック
-                            if wait_task.done():
-                                # 残りの出力を読み取る
-                                try:
-                                    while True:
-                                        chunk = await asyncio.wait_for(process.stdout.read(16384), timeout=0.1)
-                                        if not chunk:
-                                            break
-                                        stdout_chunks.append(chunk)
-                                except (asyncio.TimeoutError, Exception):
-                                    pass
-                                break
-                            
-                            try:
-                                chunk = await asyncio.wait_for(process.stdout.read(16384), timeout=0.5)
-                                if not chunk:
-                                    # EOFに達した場合、少し待機してから終了
-                                    await asyncio.sleep(0.1)
-                                    break
-                                stdout_chunks.append(chunk)
-                            except asyncio.TimeoutError:
-                                # タイムアウトした場合は続行（プロセスがまだ実行中）
-                                continue
-                    except Exception as e:
-                        logger.debug(f"標準出力の読み取り中にエラー: {str(e)}")
-                
-                async def read_stderr():
-                    """標準エラー出力を読み取る"""
-                    try:
-                        while True:
-                            # プロセスが終了しているかチェック
-                            if wait_task.done():
-                                # 残りの出力を読み取る
-                                try:
-                                    while True:
-                                        chunk = await asyncio.wait_for(process.stderr.read(16384), timeout=0.1)
-                                        if not chunk:
-                                            break
-                                        stderr_chunks.append(chunk)
-                                except (asyncio.TimeoutError, Exception):
-                                    pass
-                                break
-                            
-                            try:
-                                chunk = await asyncio.wait_for(process.stderr.read(16384), timeout=0.5)
-                                if not chunk:
-                                    # EOFに達した場合、少し待機してから終了
-                                    await asyncio.sleep(0.1)
-                                    break
-                                stderr_chunks.append(chunk)
-                            except asyncio.TimeoutError:
-                                # タイムアウトした場合は続行（プロセスがまだ実行中）
-                                continue
-                    except Exception as e:
-                        logger.debug(f"標準エラー出力の読み取り中にエラー: {str(e)}")
-                
-                # 出力読み取りタスクを開始
-                stdout_task = asyncio.create_task(read_stdout())
-                stderr_task = asyncio.create_task(read_stderr())
-                
                 # どちらかが完了するまで待機（プロセス終了または停止/タイムアウト）
                 done, pending = await asyncio.wait(
                     [wait_task, check_task],
@@ -347,10 +292,18 @@ class BatchJobWorker:
                         process.kill()
                         await process.wait()
                     
-                    # 出力読み取りタスクの完了を待つ
-                    await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
-                    stdout = b''.join(stdout_chunks) if stdout_chunks else b''
-                    stderr = b''.join(stderr_chunks) if stderr_chunks else b''
+                    # ファイルから出力を読み取る
+                    stdout = b''
+                    stderr = b''
+                    try:
+                        if os.path.exists(stdout_file):
+                            with open(stdout_file, 'rb') as f:
+                                stdout = f.read()
+                        if os.path.exists(stderr_file):
+                            with open(stderr_file, 'rb') as f:
+                                stderr = f.read()
+                    except Exception as e:
+                        logger.warning(f"出力ファイルの読み取りに失敗しました: {str(e)}")
                     
                     if stop_requested:
                         return {
@@ -366,12 +319,28 @@ class BatchJobWorker:
                 # プロセスが完了した場合
                 returncode = await wait_task
                 
-                # 出力読み取りタスクの完了を待つ（少し待機して残りの出力を読み取る）
-                await asyncio.sleep(0.1)  # 100ms待機して残りの出力を読み取る
-                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                # ファイルから出力を読み取る（少し待機してファイルが完全に書き込まれるのを待つ）
+                await asyncio.sleep(0.2)  # 200ms待機してファイルが完全に書き込まれるのを待つ
+                stdout = b''
+                stderr = b''
+                try:
+                    if os.path.exists(stdout_file):
+                        with open(stdout_file, 'rb') as f:
+                            stdout = f.read()
+                    if os.path.exists(stderr_file):
+                        with open(stderr_file, 'rb') as f:
+                            stderr = f.read()
+                except Exception as e:
+                    logger.warning(f"出力ファイルの読み取りに失敗しました: {str(e)}")
                 
-                stdout = b''.join(stdout_chunks) if stdout_chunks else b''
-                stderr = b''.join(stderr_chunks) if stderr_chunks else b''
+                # 一時ファイルを削除（オプション）
+                try:
+                    if os.path.exists(stdout_file):
+                        os.remove(stdout_file)
+                    if os.path.exists(stderr_file):
+                        os.remove(stderr_file)
+                except Exception:
+                    pass  # 削除に失敗しても問題ない
                 
                 elapsed_time = asyncio.get_event_loop().time() - start_time
                 

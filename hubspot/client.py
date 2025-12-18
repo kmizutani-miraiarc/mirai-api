@@ -26,14 +26,12 @@ class HubSpotBaseClient:
         
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
-                logger.debug(f"Making {method} request to {url}")
                 response = await client.request(
                     method=method,
                     url=url,
                     headers=self.headers,
                     **kwargs
                 )
-                logger.debug(f"Received response: {response.status_code} for {url}")
                 response.raise_for_status()
                 
                 # DELETE操作や204 No Contentの場合は空のレスポンスを返す
@@ -46,10 +44,7 @@ class HubSpotBaseClient:
                 
                 # httpxのresponse.json()は既に最適化されており、通常は高速
                 # 大きなJSONレスポンスの場合でも、同期的に実行しても問題ない
-                logger.debug(f"Parsing JSON response for {url}, content length: {len(response.content)}")
-                result = response.json()
-                logger.debug(f"JSON parsing completed for {url}")
-                return result
+                return response.json()
             except httpx.HTTPStatusError as e:
                 logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
                 raise
