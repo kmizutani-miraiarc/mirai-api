@@ -115,7 +115,9 @@ class ProfitManagementSync:
                         "contract_date",
                         "hubspot_owner_id",
                         "sales_sales_price",
-                        "research_purchase_price"
+                        "research_purchase_price",
+                        "final_closing_price",
+                        "final_closing_profit"
                     ],
                     "limit": 100
                 }
@@ -184,8 +186,6 @@ class ProfitManagementSync:
             if not bukken_id:
                 logger.warning(f"取引 {deal_id} に関連する物件のIDが取得できませんでした")
                 return None
-            
-            logger.info(f"取引 {deal_id} に関連する物件 {bukken_id} を取得中...")
             
             # 物件の詳細情報を取得
             bukken_detail = await self.bukken_client.get_bukken_by_id(bukken_id)
@@ -291,7 +291,6 @@ class ProfitManagementSync:
         """販売取引を処理して粗利按分管理データを作成・更新"""
         try:
             deal_id = sales_deal.get("id")
-            logger.info(f"取引 {deal_id} を処理中...")
             
             # 物件情報を取得
             bukken = await self.get_bukken_from_deal(sales_deal)
@@ -358,7 +357,6 @@ class ProfitManagementSync:
                     return True
                 
                 # 更新（編集可能項目は上書きしない）
-                logger.info(f"物件 {bukken_id} の粗利按分管理データを更新します（編集可能項目は保持）")
                 
                 # 粗利が既に入力されている場合は更新しない
                 gross_profit_to_set = None
@@ -485,7 +483,7 @@ class ProfitManagementSync:
                     logger.error(f"物件担当者情報の保存に失敗しました: {str(e)}", exc_info=True)
                     # 担当者情報の保存に失敗しても、メインデータは保存されているので続行
             else:
-                logger.info(f"物件 {bukken_id} ({bukken_name}) は既存データのため、担当者情報は更新しません")
+                # 既存データのため、担当者情報は更新しない
             
             logger.info(f"取引 {deal_id} の処理が完了しました (物件: {bukken_id}, {bukken_name})")
             return True
@@ -531,11 +529,9 @@ class ProfitManagementSync:
             
             for idx, deal in enumerate(sales_deals, 1):
                 deal_id = deal.get("id", "Unknown")
-                logger.info(f"Processing batch {idx}/{total_deals}: Deal {deal_id}")
                 try:
                     if await self.process_sales_deal(deal):
                         success_count += 1
-                        logger.info(f"Batch {idx}/{total_deals} completed successfully")
                     else:
                         failure_count += 1
                         logger.warning(f"Batch {idx}/{total_deals} failed")
