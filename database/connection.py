@@ -26,7 +26,10 @@ class DatabaseConnection:
                 charset=config["charset"],
                 minsize=1,
                 maxsize=10,
-                autocommit=True
+                autocommit=True,
+                connect_timeout=60,  # 接続タイムアウト（60秒）
+                read_timeout=300,    # 読み取りタイムアウト（5分）
+                write_timeout=300    # 書き込みタイムアウト（5分）
             )
             logger.info("データベース接続プールを作成しました")
         except Exception as e:

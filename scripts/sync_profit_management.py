@@ -334,7 +334,9 @@ class ProfitManagementSync:
                 purchase_owner_id = purchase_properties.get("hubspot_owner_id")
             
             # 既存の粗利按分管理データを確認（物件番号で重複チェック）
+            logger.info(f"物件 {bukken_id} ({bukken_name}) の既存データを確認中...")
             existing = await self.profit_service.get_profit_management_by_property_id(bukken_id)
+            logger.info(f"物件 {bukken_id} ({bukken_name}) の既存データ確認完了: existing={existing is not None}")
             
             if existing:
                 # 粗利確定フラグがONの場合は更新しない
@@ -356,12 +358,15 @@ class ProfitManagementSync:
                     accounting_year_month=accounting_year_month
                 )
                 
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の更新処理を開始します (seq_no: {existing.seq_no})")
                 updated = await self.profit_service.update_profit_management(existing.seq_no, update_data)
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の更新処理が完了しました: updated={updated}")
                 if not updated:
                     logger.error(f"物件 {bukken_id} の更新に失敗しました")
                     return False
                 
                 seq_no = existing.seq_no
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の更新が成功しました (seq_no: {seq_no})")
             else:
                 # 新規作成
                 logger.info(f"物件 {bukken_id} の粗利按分管理データを作成します")
@@ -378,17 +383,23 @@ class ProfitManagementSync:
                     accounting_year_month=accounting_year_month
                 )
                 
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成処理を開始します")
                 created = await self.profit_service.create_profit_management(create_data)
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成処理が完了しました: created={created is not None}")
                 if not created:
                     logger.error(f"物件 {bukken_id} の作成に失敗しました")
                     return False
                 
                 seq_no = created.seq_no
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成が成功しました (seq_no: {seq_no})")
             
             # 物件担当者情報を保存（編集可能項目は保持）
+            logger.info(f"物件 {bukken_id} ({bukken_name}) の担当者情報保存処理を開始します (seq_no: {seq_no})")
             try:
                 # 既存の担当者情報を取得
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の既存担当者情報を取得中...")
                 existing_owners = await self.owner_service.get_property_owners_by_seq_no(seq_no)
+                logger.info(f"物件 {bukken_id} ({bukken_name}) の既存担当者情報取得完了: {len(existing_owners)}件")
                 
                 # 既存の担当者をマップ（owner_id + owner_type をキーに）
                 existing_owners_map = {}
@@ -399,13 +410,17 @@ class ProfitManagementSync:
                 # 仕入担当者を保存または更新
                 if purchase_owner_id:
                     try:
+                        logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者 {purchase_owner_id} の処理を開始します")
                         # 担当者名を取得
+                        logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者名を取得中...")
                         purchase_owner_name = await self.get_owner_name(purchase_owner_id)
+                        logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者名取得完了: {purchase_owner_name}")
                         key = f"{purchase_owner_id}_{OwnerType.PURCHASE.value}"
                         
                         if key in existing_owners_map:
                             # 既存の担当者がいる場合、粗利率・粗利額を保持して更新
                             existing_owner = existing_owners_map[key]
+                            logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者を更新します (id: {existing_owner.id})")
                             update_data = PropertyOwnerUpdate(
                                 owner_name=purchase_owner_name if purchase_owner_name else existing_owner.owner_name,
                                 settlement_date=purchase_settlement_date,
@@ -413,9 +428,10 @@ class ProfitManagementSync:
                                 # profit_rate と profit_amount は編集可能項目なので更新しない（既存の値を保持）
                             )
                             await self.owner_service.update_property_owner(existing_owner.id, update_data)
-                            logger.info(f"仕入担当者 {purchase_owner_id} ({purchase_owner_name}) を更新しました（粗利率・粗利額は保持）")
+                            logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者更新完了: {purchase_owner_id} ({purchase_owner_name})")
                         else:
                             # 新規作成
+                            logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者を新規作成します")
                             purchase_owner = PropertyOwnerCreate(
                                 property_id=bukken_id,
                                 profit_management_seq_no=seq_no,
@@ -428,7 +444,7 @@ class ProfitManagementSync:
                                 profit_amount=None  # 空欄
                             )
                             await self.owner_service.create_property_owner(purchase_owner)
-                            logger.info(f"仕入担当者 {purchase_owner_id} ({purchase_owner_name}) を作成しました")
+                            logger.info(f"物件 {bukken_id} ({bukken_name}) の仕入担当者作成完了: {purchase_owner_id} ({purchase_owner_name})")
                     except Exception as e:
                         logger.warning(f"仕入担当者の保存に失敗しました: {str(e)}", exc_info=True)
                 
@@ -471,7 +487,7 @@ class ProfitManagementSync:
                 logger.error(f"物件担当者情報の保存に失敗しました: {str(e)}", exc_info=True)
                 # 担当者情報の保存に失敗しても、メインデータは保存されているので続行
             
-            logger.info(f"取引 {deal_id} の処理が完了しました")
+            logger.info(f"取引 {deal_id} の処理が完了しました (物件: {bukken_id}, {bukken_name})")
             return True
             
         except Exception as e:
