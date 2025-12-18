@@ -25,3 +25,4 @@ ALTER TABLE contact_scoring_summary
 ADD INDEX idx_pattern_type (pattern_type);
 
 
+

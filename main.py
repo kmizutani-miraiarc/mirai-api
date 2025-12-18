@@ -26,6 +26,7 @@ from routers.satei import router as satei_router
 from routers.haihai_click_log import router as haihai_click_log_router
 from routers.purchase_achievement import router as purchase_achievement_router
 from routers.contact_phase_summary import router as contact_phase_summary_router
+from routers.contact_phase_summary_monthly import router as contact_phase_summary_monthly_router
 from routers.contact_scoring_summary import router as contact_scoring_summary_router
 
 # ログ設定
@@ -333,6 +334,7 @@ app.include_router(satei_router)
 app.include_router(haihai_click_log_router)
 app.include_router(purchase_achievement_router)
 app.include_router(contact_phase_summary_router)
+app.include_router(contact_phase_summary_monthly_router)
 app.include_router(contact_scoring_summary_router)
 
 # レスポンス用のモデル

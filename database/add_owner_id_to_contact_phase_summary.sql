@@ -28,3 +28,4 @@ ADD INDEX idx_aggregation_date_owner (aggregation_date, owner_id);
 
 
 
+

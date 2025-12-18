@@ -23,3 +23,4 @@ ALTER TABLE contact_phase_summary
 ADD UNIQUE KEY uk_aggregation_owner_phases (aggregation_date, owner_id, buy_phase, sell_phase);
 
 
+

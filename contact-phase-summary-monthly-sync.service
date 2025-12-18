@@ -1,5 +1,5 @@
 [Unit]
-Description=Contact Phase Summary Sync Service
+Description=Contact Phase Summary Sync Service (Monthly)
 After=network.target
 
 [Service]
@@ -8,10 +8,10 @@ User=mirai-api
 Group=mirai-api
 WorkingDirectory=/var/www/mirai-api
 Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
-ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/sync_contact_phase_summary.py
+ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/sync_contact_phase_summary_monthly.py
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=contact-phase-summary-sync
+SyslogIdentifier=contact-phase-summary-monthly-sync
 
 # セキュリティ設定
 NoNewPrivileges=true
@@ -23,7 +23,4 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
-
-
-
 
