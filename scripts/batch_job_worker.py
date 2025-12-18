@@ -231,11 +231,18 @@ class BatchJobWorker:
                 stop_requested = False
                 timeout_reached = False
                 
+                # プロセスの終了を待機するタスク（先に定義）
+                wait_task = asyncio.create_task(process.wait())
+                
                 async def check_stop_and_timeout():
                     """停止チェックとタイムアウトチェックを行うタスク"""
                     nonlocal stop_requested, timeout_reached
                     while True:
                         await asyncio.sleep(2)  # 2秒ごとにチェック
+                        
+                        # プロセスが既に終了している場合は終了
+                        if wait_task.done():
+                            return
                         
                         # タイムアウトチェック
                         elapsed_time = asyncio.get_event_loop().time() - start_time
@@ -252,30 +259,83 @@ class BatchJobWorker:
                             stop_requested = True
                             process.terminate()
                             return
-                        
-                        # プロセスが既に終了している場合は終了
-                        if process.returncode is not None:
-                            return
                 
                 # 停止チェック・タイムアウトチェックのタスクを開始
                 check_task = asyncio.create_task(check_stop_and_timeout())
                 
-                # プロセスの完了を待機するタスク
-                communicate_task = asyncio.create_task(process.communicate())
+                # 出力を読み取るタスク（非ブロッキング）
+                stdout_chunks = []
+                stderr_chunks = []
                 
-                # どちらかが完了するまで待機
+                async def read_stdout():
+                    """標準出力を読み取る"""
+                    try:
+                        while True:
+                            # プロセスが終了しているかチェック
+                            if wait_task.done():
+                                # 残りの出力を読み取る
+                                try:
+                                    while True:
+                                        chunk = await asyncio.wait_for(process.stdout.read(4096), timeout=0.1)
+                                        if not chunk:
+                                            break
+                                        stdout_chunks.append(chunk)
+                                except (asyncio.TimeoutError, Exception):
+                                    pass
+                                break
+                            
+                            try:
+                                chunk = await asyncio.wait_for(process.stdout.read(4096), timeout=1.0)
+                                if not chunk:
+                                    # EOFに達した場合、少し待機してから終了
+                                    await asyncio.sleep(0.1)
+                                    break
+                                stdout_chunks.append(chunk)
+                            except asyncio.TimeoutError:
+                                # タイムアウトした場合は続行（プロセスがまだ実行中）
+                                continue
+                    except Exception as e:
+                        logger.debug(f"標準出力の読み取り中にエラー: {str(e)}")
+                
+                async def read_stderr():
+                    """標準エラー出力を読み取る"""
+                    try:
+                        while True:
+                            # プロセスが終了しているかチェック
+                            if wait_task.done():
+                                # 残りの出力を読み取る
+                                try:
+                                    while True:
+                                        chunk = await asyncio.wait_for(process.stderr.read(4096), timeout=0.1)
+                                        if not chunk:
+                                            break
+                                        stderr_chunks.append(chunk)
+                                except (asyncio.TimeoutError, Exception):
+                                    pass
+                                break
+                            
+                            try:
+                                chunk = await asyncio.wait_for(process.stderr.read(4096), timeout=1.0)
+                                if not chunk:
+                                    # EOFに達した場合、少し待機してから終了
+                                    await asyncio.sleep(0.1)
+                                    break
+                                stderr_chunks.append(chunk)
+                            except asyncio.TimeoutError:
+                                # タイムアウトした場合は続行（プロセスがまだ実行中）
+                                continue
+                    except Exception as e:
+                        logger.debug(f"標準エラー出力の読み取り中にエラー: {str(e)}")
+                
+                # 出力読み取りタスクを開始
+                stdout_task = asyncio.create_task(read_stdout())
+                stderr_task = asyncio.create_task(read_stderr())
+                
+                # どちらかが完了するまで待機（プロセス終了または停止/タイムアウト）
                 done, pending = await asyncio.wait(
-                    [communicate_task, check_task],
+                    [wait_task, check_task],
                     return_when=asyncio.FIRST_COMPLETED
                 )
-                
-                # 未完了のタスクをキャンセル
-                for task in pending:
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
                 
                 # 停止またはタイムアウトが発生した場合
                 if check_task in done:
@@ -287,12 +347,10 @@ class BatchJobWorker:
                         process.kill()
                         await process.wait()
                     
-                    # 出力を取得（可能な限り）
-                    try:
-                        stdout, stderr = await asyncio.wait_for(communicate_task, timeout=1.0)
-                    except:
-                        stdout = b''
-                        stderr = b''
+                    # 出力読み取りタスクの完了を待つ
+                    await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                    stdout = b''.join(stdout_chunks) if stdout_chunks else b''
+                    stderr = b''.join(stderr_chunks) if stderr_chunks else b''
                     
                     if stop_requested:
                         return {
@@ -306,17 +364,14 @@ class BatchJobWorker:
                         }
                 
                 # プロセスが完了した場合
-                stdout, stderr = await communicate_task
+                returncode = await wait_task
                 
-                # プロセスの終了を確実に待機
-                if process.returncode is None:
-                    logger.info(f"プロセスの出力読み取りが完了しましたが、プロセスがまだ実行中です。終了を待機します (ジョブID: {job_id})")
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=30.0)
-                    except asyncio.TimeoutError:
-                        logger.warning(f"プロセスの終了待ちがタイムアウトしました。強制終了します (ジョブID: {job_id})")
-                        process.kill()
-                        await process.wait()
+                # 出力読み取りタスクの完了を待つ（少し待機して残りの出力を読み取る）
+                await asyncio.sleep(0.1)  # 100ms待機して残りの出力を読み取る
+                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                
+                stdout = b''.join(stdout_chunks) if stdout_chunks else b''
+                stderr = b''.join(stderr_chunks) if stderr_chunks else b''
                 
                 elapsed_time = asyncio.get_event_loop().time() - start_time
                 
@@ -345,12 +400,12 @@ class BatchJobWorker:
                     if stderr_text.strip():
                         logger.warning(f"ジョブの標準エラー出力 (ジョブID: {job_id}):\n{stderr_text}")
                 
-                if process.returncode == 0:
+                if returncode == 0:
                     logger.info(f"ジョブが正常に完了しました (ジョブID: {job_id}, 経過時間: {elapsed_time:.1f}秒)")
                     return {'success': True}
                 else:
                     error_output = stderr.decode('utf-8', errors='replace') if stderr else 'Unknown error'
-                    logger.error(f"ジョブの実行に失敗しました (ジョブID: {job_id}, 終了コード: {process.returncode}): {error_output}")
+                    logger.error(f"ジョブの実行に失敗しました (ジョブID: {job_id}, 終了コード: {returncode}): {error_output}")
                     # stdoutにもエラー情報がある可能性がある
                     if stdout:
                         stdout_text = stdout.decode('utf-8', errors='replace')

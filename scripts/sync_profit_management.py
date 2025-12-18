@@ -36,7 +36,16 @@ else:
 os.makedirs(log_dir, exist_ok=True)
 
 # ログハンドラーのバッファリングを無効化
+# FileHandlerはデフォルトでバッファリングされるため、即座にフラッシュするように設定
 file_handler = logging.FileHandler(os.path.join(log_dir, 'profit_management_sync.log'))
+file_handler.setLevel(logging.INFO)
+# 各ログ出力後に即座にフラッシュするカスタムハンドラー
+class FlushingFileHandler(logging.FileHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+file_handler = FlushingFileHandler(os.path.join(log_dir, 'profit_management_sync.log'))
 file_handler.setLevel(logging.INFO)
 stream_handler = logging.StreamHandler()
 stream_handler.setLevel(logging.INFO)
