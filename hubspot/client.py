@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 from typing import Dict, Any
@@ -41,7 +42,13 @@ class HubSpotBaseClient:
                 if not response.content:
                     return {"success": True}
                 
-                return response.json()
+                # 大きなJSONレスポンスのパースを別スレッドで実行してイベントループをブロックしないようにする
+                try:
+                    return await asyncio.to_thread(response.json)
+                except AttributeError:
+                    # Python 3.9未満の場合は通常のjson()を使用
+                    import json
+                    return await asyncio.to_thread(json.loads, response.content)
             except httpx.HTTPStatusError as e:
                 logger.error(f"HubSpot API error: {e.response.status_code} - {e.response.text}")
                 raise

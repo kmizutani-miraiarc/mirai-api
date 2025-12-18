@@ -488,15 +488,22 @@ class ProfitManagementSync:
             # 各取引を処理
             success_count = 0
             failure_count = 0
+            total_deals = len(sales_deals)
             
-            for deal in sales_deals:
+            logger.info(f"処理対象の取引数: {total_deals}件")
+            
+            for idx, deal in enumerate(sales_deals, 1):
+                deal_id = deal.get("id", "Unknown")
+                logger.info(f"Processing batch {idx}/{total_deals}: Deal {deal_id}")
                 try:
                     if await self.process_sales_deal(deal):
                         success_count += 1
+                        logger.info(f"Batch {idx}/{total_deals} completed successfully")
                     else:
                         failure_count += 1
+                        logger.warning(f"Batch {idx}/{total_deals} failed")
                 except Exception as e:
-                    logger.error(f"取引処理中にエラーが発生しました: {str(e)}")
+                    logger.error(f"取引処理中にエラーが発生しました (Batch {idx}/{total_deals}): {str(e)}", exc_info=True)
                     failure_count += 1
             
             logger.info(f"粗利按分管理データの同期が完了しました: 成功={success_count}件, 失敗={failure_count}件")
