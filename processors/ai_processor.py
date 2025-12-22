@@ -17,14 +17,13 @@ class AIProcessor:
     """AI処理クラス"""
     
     # Gemini API関連定数
-    AVAILABLE_MODELS = [
-        'gemini-1.5-flash',
-        'gemini-2.0-flash', 
-        'gemini-1.5-pro',
-        'gemini-2.5-flash',
-        'gemini-2.5-pro'
+    # デフォルトのモデルリスト（動的取得に失敗した場合のフォールバック）
+    # 高速な順に並べる（無料で利用可能なモデル）
+    DEFAULT_MODELS = [
+        'gemini-1.5-flash',      # 最速、無料
+        'gemini-1.5-pro',        # 高精度、無料
+        'gemini-pro',            # 旧バージョン（互換性のため）
     ]
-    DEFAULT_MODEL = 'gemini-1.5-flash'
     MAX_TOKENS = 4096
     TEMPERATURE = 0.1
     
@@ -37,6 +36,63 @@ class AIProcessor:
         # Gemini APIの設定
         genai.configure(api_key=self.api_key)
         logger.info("AIProcessor initialized with Gemini API")
+        
+        # 利用可能なモデルを動的に取得（無料で利用可能なモデルのみ）
+        self.available_models = self._get_available_models()
+        logger.info(f"Using {len(self.available_models)} available models: {self.available_models}")
+    
+    def _get_available_models(self) -> List[str]:
+        """
+        利用可能なGeminiモデルを動的に取得
+        無料で利用可能なモデルを高速な順に返す
+        
+        Returns:
+            利用可能なモデル名のリスト（models/プレフィックスなし）
+        """
+        try:
+            all_models = genai.list_models()
+            # generateContentをサポートするモデルのみを取得
+            supported_models = [
+                m.name.replace('models/', '') 
+                for m in all_models 
+                if 'generateContent' in m.supported_generation_methods
+            ]
+            
+            logger.info(f"All supported models from API: {supported_models}")
+            
+            # 無料で利用可能なモデルを優先（gemini-1.5-flash系を最優先）
+            # 高速な順に並べる
+            priority_order = [
+                'gemini-1.5-flash',      # 最速
+                'gemini-1.5-pro',       # 高精度
+                'gemini-pro',           # 旧バージョン
+            ]
+            
+            # 優先順位に従って並べ替え（完全一致のみ）
+            ordered_models = []
+            for priority_model in priority_order:
+                if priority_model in supported_models:
+                    ordered_models.append(priority_model)
+            
+            # 優先順位にないgeminiモデルも追加（flash系を優先）
+            for model in supported_models:
+                if model.startswith('gemini-') and model not in ordered_models:
+                    # flash系を優先的に追加
+                    if 'flash' in model:
+                        ordered_models.insert(0, model) if ordered_models else ordered_models.append(model)
+                    else:
+                        ordered_models.append(model)
+            
+            if ordered_models:
+                logger.info(f"Found {len(ordered_models)} available models (ordered by speed): {ordered_models}")
+                return ordered_models
+            else:
+                logger.warning("No models found via API, using default models")
+                return self.DEFAULT_MODELS
+                
+        except Exception as e:
+            logger.warning(f"Failed to list available models: {str(e)}. Using default models.", exc_info=True)
+            return self.DEFAULT_MODELS
     
     def analyze_text(self, text: str) -> Dict[str, Any]:
         """
@@ -55,23 +111,33 @@ class AIProcessor:
             if not text or not text.strip():
                 raise ValueError('解析対象のテキストが空です')
             
-            # 利用可能なモデルを順番に試行
-            for model_name in self.AVAILABLE_MODELS:
+            # 利用可能なモデルを順番に試行（高速な順）
+            model_errors = []
+            for model_name in self.available_models:
                 try:
                     logger.info(f"Trying model: {model_name}")
                     result = self._analyze_with_model(text, model_name)
                     if result:
                         logger.info(f"Successfully analyzed with model: {model_name}")
                         return result
+                    else:
+                        model_errors.append(f"{model_name}: JSON抽出に失敗しました")
+                        logger.warning(f"Model {model_name} returned None (no valid JSON)")
                         
                 except Exception as model_error:
-                    logger.warning(f"Model {model_name} failed: {str(model_error)}")
+                    error_msg = str(model_error)
+                    model_errors.append(f"{model_name}: {error_msg}")
+                    logger.warning(f"Model {model_name} failed: {error_msg}", exc_info=True)
                     continue
             
-            raise Exception('すべてのモデルでの解析に失敗しました')
+            # すべてのモデルが失敗した場合、詳細なエラーメッセージを返す
+            error_summary = "すべてのモデルでの解析に失敗しました。"
+            if model_errors:
+                error_summary += f" エラー詳細: {'; '.join(model_errors[:3])}"  # 最初の3つのエラーのみ表示
+            raise Exception(error_summary)
             
         except Exception as e:
-            logger.error(f"Text analysis failed: {str(e)}")
+            logger.error(f"Text analysis failed: {str(e)}", exc_info=True)
             raise
     
     def _analyze_with_model(self, text: str, model_name: str) -> Optional[Dict[str, Any]]:
@@ -87,10 +153,26 @@ class AIProcessor:
         """
         try:
             # モデルの初期化
-            model = genai.GenerativeModel(model_name)
+            try:
+                # モデル名は "models/" プレフィックスなしで指定（genai.GenerativeModelが自動的に処理）
+                # ただし、APIが "models/" プレフィックスを要求する場合は追加
+                model = genai.GenerativeModel(model_name)
+                logger.debug(f"Model {model_name} initialized successfully")
+            except Exception as init_error:
+                error_str = str(init_error)
+                # より詳細なエラーメッセージを生成
+                if "404" in error_str or "not found" in error_str.lower() or "does not exist" in error_str.lower():
+                    error_msg = f"モデルが見つかりません: {model_name} は利用できません。利用可能なモデルを確認してください。"
+                elif "403" in error_str or "permission" in error_str.lower() or "forbidden" in error_str.lower():
+                    error_msg = f"モデルへのアクセスが拒否されました: {model_name}。APIキーの権限を確認してください。"
+                else:
+                    error_msg = f"モデルの初期化に失敗: {error_str}"
+                logger.error(f"Model {model_name} initialization failed: {error_msg}", exc_info=True)
+                raise Exception(error_msg)
             
             # プロンプトの生成
             prompt = self._create_prompt(text)
+            logger.debug(f"Prompt length: {len(prompt)} characters")
             
             # 生成設定
             generation_config = genai.types.GenerationConfig(
@@ -99,13 +181,30 @@ class AIProcessor:
             )
             
             # コンテンツ生成
-            response = model.generate_content(
-                prompt,
-                generation_config=generation_config
-            )
+            try:
+                response = model.generate_content(
+                    prompt,
+                    generation_config=generation_config
+                )
+            except Exception as gen_error:
+                error_msg = f"コンテンツ生成に失敗: {str(gen_error)}"
+                # APIキーエラー、クォータエラー、ネットワークエラーなどを識別
+                if "API key" in str(gen_error).lower() or "authentication" in str(gen_error).lower():
+                    error_msg = f"API認証エラー: Gemini APIキーが無効または設定されていません"
+                elif "quota" in str(gen_error).lower() or "limit" in str(gen_error).lower():
+                    error_msg = f"APIクォータエラー: リクエスト制限に達しています"
+                elif "not found" in str(gen_error).lower() or "404" in str(gen_error):
+                    error_msg = f"モデルが見つかりません: {model_name} は利用できません"
+                logger.error(f"Model {model_name} content generation failed: {error_msg}", exc_info=True)
+                raise Exception(error_msg)
             
             # レスポンスの処理
-            response_text = response.text
+            try:
+                response_text = response.text
+            except Exception as text_error:
+                error_msg = f"レスポンステキストの取得に失敗: {str(text_error)}"
+                logger.error(f"Model {model_name} response.text failed: {error_msg}", exc_info=True)
+                raise Exception(error_msg)
             
             # JSONの抽出
             json_data = self._extract_json_from_response(response_text)
@@ -119,7 +218,7 @@ class AIProcessor:
                 return None
                 
         except Exception as e:
-            logger.error(f"Model {model_name} analysis failed: {str(e)}")
+            logger.error(f"Model {model_name} analysis failed: {str(e)}", exc_info=True)
             raise
     
     def _normalize_numeric_values(self, data: Dict[str, Any]) -> Dict[str, Any]:

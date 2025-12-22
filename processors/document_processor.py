@@ -73,8 +73,11 @@ class DocumentProcessor:
                 return self._extract_text_from_image(file_path)
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
+        except ValueError:
+            # ValueErrorはそのまま再スロー（呼び出し元で適切に処理）
+            raise
         except Exception as e:
-            logger.error(f"Error processing file {file_path}: {str(e)}")
+            logger.error(f"Error processing file {file_path}: {str(e)}", exc_info=True)
             raise
     
     def _extract_text_from_pdf(self, pdf_path: str) -> str:
@@ -87,19 +90,76 @@ class DocumentProcessor:
         Returns:
             抽出されたテキスト
         """
+        text = ""
+        pypdf2_success = False
+        ocr_success = False
+        ocr_attempted = False
+        
+        # まずPyPDF2でテキスト抽出を試行
         try:
-            # まずPyPDF2でテキスト抽出を試行
             text = self._extract_text_from_pdf_with_pypdf2(pdf_path)
-            
-            # テキストが少ない場合はOCRを使用
-            if len(text.strip()) < 50:
-                logger.info("PyPDF2 extraction yielded little text, trying OCR")
-                text = self._extract_text_from_pdf_with_ocr(pdf_path)
-            
-            return text
+            if text and len(text.strip()) >= 50:
+                pypdf2_success = True
+                logger.info(f"PyPDF2 extraction successful: {len(text.strip())} characters")
+                return text
+            elif text and len(text.strip()) > 0:
+                # テキストが少ないが、ある場合は保持してOCRを試行
+                logger.info(f"PyPDF2 extraction yielded little text: {len(text.strip())} characters, will try OCR")
+            else:
+                logger.info("PyPDF2 extraction yielded no text, will try OCR")
         except Exception as e:
-            logger.error(f"Error extracting text from PDF {pdf_path}: {str(e)}")
-            raise
+            logger.warning(f"PyPDF2 extraction failed: {str(e)}, falling back to OCR", exc_info=True)
+            text = ""
+        
+        # テキストが少ない場合、またはPyPDF2が失敗した場合はOCRを使用
+        if not pypdf2_success:
+            logger.info(f"Attempting OCR extraction for PDF. Current text length: {len(text.strip()) if text else 0}")
+            ocr_attempted = True
+            try:
+                ocr_text = self._extract_text_from_pdf_with_ocr(pdf_path)
+                if ocr_text and len(ocr_text.strip()) > 0:
+                    text = ocr_text
+                    ocr_success = True
+                    logger.info(f"OCR extraction successful: {len(text.strip())} characters")
+                else:
+                    logger.warning("OCR extraction returned empty text")
+                    # OCRでテキストが取得できなかったが、PyPDF2でテキストが取得できていれば続行
+                    if text and len(text.strip()) > 0:
+                        logger.info(f"Using PyPDF2 extracted text: {len(text.strip())} characters")
+            except ValueError as ve:
+                # OCR処理でValueErrorが発生した場合（例: PDFを画像に変換できない）
+                logger.error(f"OCR extraction failed with ValueError: {str(ve)}", exc_info=True)
+                # ValueErrorは致命的なエラーだが、PyPDF2でテキストが取得できていれば続行
+                if not text or not text.strip():
+                    raise ValueError(f"PDFからテキストを抽出できませんでした: {str(ve)}")
+                else:
+                    logger.info(f"OCR failed but PyPDF2 text available: {len(text.strip())} characters, continuing")
+            except Exception as e:
+                logger.error(f"OCR extraction failed with exception: {str(e)}", exc_info=True)
+                # その他のエラーもログに記録するが、PyPDF2でテキストが取得できていれば続行
+                if not text or not text.strip():
+                    raise ValueError(f"PDFのOCR処理に失敗しました: {str(e)}")
+                else:
+                    logger.info(f"OCR failed but PyPDF2 text available: {len(text.strip())} characters, continuing")
+        
+        # どちらの方法でもテキストが取得できなかった場合
+        if not text or not text.strip():
+            error_msg = "PDFからテキストを抽出できませんでした。"
+            if not pypdf2_success and not ocr_success:
+                if ocr_attempted:
+                    error_msg += "PDFが画像のみで構成されている可能性があります。OCR処理でテキストを認識できませんでした。"
+                else:
+                    error_msg += "PDFが画像のみで構成されている可能性があります。OCR処理を実行できませんでした。"
+            elif not pypdf2_success and ocr_success:
+                error_msg += "OCR処理は実行されましたが、テキストを抽出できませんでした。"
+            elif not pypdf2_success:
+                error_msg += "テキスト抽出に失敗しました。"
+            logger.error(f"Text extraction failed: {error_msg} (pypdf2_success={pypdf2_success}, ocr_success={ocr_success}, ocr_attempted={ocr_attempted})")
+            raise ValueError(error_msg)
+        
+        # テキストが取得できた場合（PyPDF2またはOCRのどちらかで成功）
+        logger.info(f"Text extraction completed successfully: {len(text.strip())} characters (pypdf2_success={pypdf2_success}, ocr_success={ocr_success})")
+        return text
     
     def _extract_text_from_pdf_with_pypdf2(self, pdf_path: str) -> str:
         """PyPDF2を使用してPDFからテキストを抽出"""
@@ -110,9 +170,20 @@ class DocumentProcessor:
                 # 1ページ目のみ処理
                 if len(pdf_reader.pages) > 0:
                     page = pdf_reader.pages[0]
-                    text += page.extract_text() + "\n"
+                    extracted = page.extract_text()
+                    if extracted:
+                        text += extracted + "\n"
+                    else:
+                        # テキストが抽出できなかった場合（画像ベースのPDFの可能性）
+                        logger.info("PyPDF2 extracted no text from page (likely image-based PDF)")
+                else:
+                    logger.warning("PDF has no pages")
+        except PyPDF2.errors.PdfReadError as e:
+            logger.warning(f"PyPDF2 PDF read error: {str(e)}")
+            raise Exception(f"PDFの読み込みに失敗しました: {str(e)}")
         except Exception as e:
             logger.warning(f"PyPDF2 extraction failed: {str(e)}")
+            raise Exception(f"PyPDF2でのテキスト抽出に失敗しました: {str(e)}")
         return text
     
     def _extract_text_from_pdf_with_ocr(self, pdf_path: str) -> str:
@@ -122,31 +193,52 @@ class DocumentProcessor:
             dpi_options = [400]  # 400DPIのみで高速処理
             best_text = ""
             best_confidence = 0
+            conversion_error = None
             
             for dpi in dpi_options:
                 try:
                     logger.info(f"Trying OCR with DPI: {dpi}")
                     # PDFを画像に変換（パフォーマンス最適化）
-                    images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=1)  # 1ページ目のみ処理
+                    # 画像ベースのPDFの場合でもエラーを出さずに処理を続行
+                    try:
+                        images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=1)  # 1ページ目のみ処理
+                    except FileNotFoundError as fnf_error:
+                        # popplerがインストールされていない場合
+                        error_msg = "PDFを画像に変換するために必要なpopplerがインストールされていません。"
+                        logger.error(f"Poppler not found: {str(fnf_error)}")
+                        raise ValueError(error_msg)
+                    except Exception as convert_error:
+                        logger.error(f"Failed to convert PDF to images: {str(convert_error)}", exc_info=True)
+                        conversion_error = str(convert_error)
+                        # pdf2imageが失敗した場合、エラーを記録して続行を試みる
+                        raise ValueError(f"PDFを画像に変換できませんでした: {str(convert_error)}")
+                    
+                    if not images:
+                        logger.warning("No images extracted from PDF")
+                        continue
                     
                     page_texts = []
                     total_confidence = 0
                     valid_pages = 0
                     
                     for i, image in enumerate(images):
-                        # 一時ファイルとして保存
-                        temp_image_path = os.path.join(self.temp_dir, f"page_{i}_dpi_{dpi}.png")
-                        image.save(temp_image_path, 'PNG')
-                        
-                        # 画像の前処理
-                        processed_image = self._preprocess_image(image)
-                        
-                        # OCRでテキスト抽出
-                        page_text = self._extract_text_with_multiple_configs(processed_image)
-                        
-                        if page_text.strip():
-                            page_texts.append(page_text)
-                            valid_pages += 1
+                        try:
+                            # 一時ファイルとして保存
+                            temp_image_path = os.path.join(self.temp_dir, f"page_{i}_dpi_{dpi}.png")
+                            image.save(temp_image_path, 'PNG')
+                            
+                            # 画像の前処理
+                            processed_image = self._preprocess_image(image)
+                            
+                            # OCRでテキスト抽出
+                            page_text = self._extract_text_with_multiple_configs(processed_image)
+                            
+                            if page_text.strip():
+                                page_texts.append(page_text)
+                                valid_pages += 1
+                        except Exception as page_error:
+                            logger.warning(f"Failed to process page {i}: {str(page_error)}", exc_info=True)
+                            continue
                     
                     # 全ページのテキストを結合
                     combined_text = "\n".join(page_texts)
@@ -154,21 +246,37 @@ class DocumentProcessor:
                     # テキストの品質を評価（長さと文字の多様性）
                     text_quality = self._evaluate_text_quality(combined_text)
                     
-                    logger.info(f"DPI {dpi}: text_length={len(combined_text)}, quality_score={text_quality:.2f}")
+                    logger.info(f"DPI {dpi}: text_length={len(combined_text)}, quality_score={text_quality:.2f}, valid_pages={valid_pages}")
                     
                     if text_quality > best_confidence:
                         best_confidence = text_quality
                         best_text = combined_text
                         
+                except ValueError as ve:
+                    # PDF変換エラーは再スロー
+                    raise
                 except Exception as e:
-                    logger.warning(f"OCR with DPI {dpi} failed: {str(e)}")
+                    logger.warning(f"OCR with DPI {dpi} failed: {str(e)}", exc_info=True)
                     continue
+            
+            if not best_text or not best_text.strip():
+                logger.warning("OCR failed to extract any text from PDF")
+                # 変換エラーがあった場合はそれを返す
+                if conversion_error:
+                    raise ValueError(f"PDFを画像に変換できませんでした: {conversion_error}")
+                # エラーを投げずに空文字列を返す（呼び出し元で処理）
+                return ""
             
             logger.info(f"Best OCR result: quality_score={best_confidence:.2f}, text_length={len(best_text)}")
             return best_text
             
+        except ValueError as ve:
+            # PDFを画像に変換できないなどの致命的なエラー
+            logger.error(f"PDF OCR extraction failed with ValueError: {str(ve)}", exc_info=True)
+            raise
         except Exception as e:
-            logger.error(f"PDF OCR extraction failed: {str(e)}")
+            logger.error(f"PDF OCR extraction failed with exception: {str(e)}", exc_info=True)
+            # その他のエラーは空文字列を返す（呼び出し元で処理）
             return ""
     
     def _evaluate_text_quality(self, text: str) -> float:

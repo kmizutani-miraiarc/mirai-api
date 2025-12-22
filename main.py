@@ -2031,10 +2031,10 @@ async def analyze_property_document(
             detail="サポートされていないファイル形式です。対応形式: " + ", ".join(supported_types)
         )
     
-    # ファイルサイズの検証（10MB制限）
+    # ファイルサイズの検証（20MB制限）
     file_content = await file.read()
-    if len(file_content) > 10 * 1024 * 1024:  # 10MB
-        raise HTTPException(status_code=400, detail='ファイルサイズが大きすぎます（最大10MB）')
+    if len(file_content) > 20 * 1024 * 1024:  # 20MB
+        raise HTTPException(status_code=400, detail='ファイルサイズが大きすぎます（最大20MB）')
     
     # 一時ファイルの作成
     temp_file_path = None
@@ -2057,10 +2057,21 @@ async def analyze_property_document(
             
             # テキスト抽出
             logger.info('Starting text extraction')
-            extracted_text = document_processor.process_file(temp_file_path, file_type)
+            extracted_text = None
+            try:
+                extracted_text = document_processor.process_file(temp_file_path, file_type)
+            except ValueError as ve:
+                # テキスト抽出ができない場合（画像ベースのPDFなど）
+                logger.error(f'Text extraction failed with ValueError: {str(ve)}', exc_info=True)
+                raise HTTPException(status_code=400, detail=str(ve))
+            except Exception as e:
+                # その他のエラー
+                logger.error(f'Text extraction error: {str(e)}', exc_info=True)
+                raise HTTPException(status_code=500, detail=f'テキスト抽出中にエラーが発生しました: {str(e)}')
             
             if not extracted_text or not extracted_text.strip():
-                raise HTTPException(status_code=400, detail='ファイルからテキストを抽出できませんでした')
+                logger.error('Extracted text is empty after processing')
+                raise HTTPException(status_code=400, detail='ファイルからテキストを抽出できませんでした。PDFが画像のみで構成されている可能性があります。')
             
             logger.info(f'Text extraction completed. Length: {len(extracted_text)} characters')
             
@@ -2068,7 +2079,17 @@ async def analyze_property_document(
             document_processor.cleanup()
         
         # AI処理
-        ai_processor = AIProcessor()
+        try:
+            ai_processor = AIProcessor()
+        except ValueError as ve:
+            # GEMINI_API_KEYが設定されていない場合
+            logger.error(f'AIProcessor initialization failed: {str(ve)}', exc_info=True)
+            raise HTTPException(status_code=500, detail=f'AI処理の初期化に失敗しました: {str(ve)}')
+        except Exception as init_error:
+            # その他の初期化エラー
+            logger.error(f'AIProcessor initialization failed: {str(init_error)}', exc_info=True)
+            raise HTTPException(status_code=500, detail=f'AI処理の初期化に失敗しました: {str(init_error)}')
+        
         try:
             # テキスト解析
             logger.info('Starting AI analysis')
@@ -2080,8 +2101,12 @@ async def analyze_property_document(
             
             logger.info('AI analysis completed successfully')
             
+        except ValueError as ve:
+            # テキストが空などのバリデーションエラー
+            logger.error(f'AI analysis validation failed: {str(ve)}', exc_info=True)
+            raise HTTPException(status_code=400, detail=f'AI解析の入力が不正です: {str(ve)}')
         except Exception as ai_error:
-            logger.error(f'AI analysis failed: {str(ai_error)}')
+            logger.error(f'AI analysis failed: {str(ai_error)}', exc_info=True)
             raise HTTPException(status_code=500, detail=f'AI解析に失敗しました: {str(ai_error)}')
         
         # レスポンスの作成
@@ -2097,7 +2122,7 @@ async def analyze_property_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f'Property analysis failed: {str(e)}')
+        logger.error(f'Property analysis failed: {str(e)}', exc_info=True)
         raise HTTPException(status_code=500, detail=f'解析処理中にエラーが発生しました: {str(e)}')
     
     finally:
