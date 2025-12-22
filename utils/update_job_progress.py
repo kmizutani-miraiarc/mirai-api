@@ -36,17 +36,17 @@ async def update_progress(
     """
     if job_id is None:
         # 環境変数から取得を試みる
-        job_id = os.environ.get('BATCH_JOB_ID')
-        if job_id:
+        job_id_str = os.environ.get('BATCH_JOB_ID')
+        if job_id_str:
             try:
-                job_id = int(job_id)
-            except ValueError:
-                logger.warning(f"無効なBATCH_JOB_ID: {job_id}")
+                job_id = int(job_id_str)
+            except (ValueError, TypeError):
+                logger.warning(f"無効なBATCH_JOB_ID: {job_id_str}")
                 return
-    
-    if job_id is None:
-        logger.warning("job_idが指定されていません。進捗を更新できません。")
-        return
+        else:
+            # 環境変数が設定されていない場合は警告を出さずに静かに終了
+            # （手動実行時など、BATCH_JOB_IDが設定されていない場合があるため）
+            return
     
     try:
         queue = BatchJobQueue()

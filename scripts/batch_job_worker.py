@@ -282,8 +282,24 @@ class BatchJobWorker:
                     return_when=asyncio.FIRST_COMPLETED
                 )
                 
+                # 未完了のタスクをキャンセル
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                
                 # 停止またはタイムアウトが発生した場合
                 if check_task in done:
+                    # wait_taskがまだ実行中の場合はキャンセル
+                    if wait_task in pending:
+                        wait_task.cancel()
+                        try:
+                            await wait_task
+                        except asyncio.CancelledError:
+                            pass
+                    
                     # プロセスの終了を待機
                     try:
                         await asyncio.wait_for(process.wait(), timeout=5.0)
