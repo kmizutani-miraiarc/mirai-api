@@ -239,7 +239,7 @@ async def sync_profit_management(
         
         # バッチジョブキューに追加
         queue = BatchJobQueue()
-        job_id = await queue.add_job('profit-management', max_retries=0)
+        job_id = await queue.add_job('profit-management')
         
         if job_id:
             logger.info(f"粗利按分管理データ同期をキューに追加しました (ID: {job_id})")

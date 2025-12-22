@@ -41,8 +41,23 @@ def _parse_batch_job_id_from_args():
         logger.info(f"キャッシュからBATCH_JOB_IDを取得: {_BATCH_JOB_ID_FROM_ARGS}")
         return _BATCH_JOB_ID_FROM_ARGS
     
+    # sys.argvの内容を確認
     logger.info(f"コマンドライン引数をパース開始: sys.argv={sys.argv}")
+    logger.info(f"sys.argvの長さ: {len(sys.argv)}")
     
+    # 直接sys.argvを確認して--batch-job-idを探す
+    batch_job_id = None
+    for i, arg in enumerate(sys.argv):
+        if arg == '--batch-job-id' and i + 1 < len(sys.argv):
+            try:
+                batch_job_id = int(sys.argv[i + 1])
+                logger.info(f"sys.argvから直接BATCH_JOB_IDを取得: {batch_job_id}")
+                _BATCH_JOB_ID_FROM_ARGS = batch_job_id
+                return batch_job_id
+            except (ValueError, IndexError) as e:
+                logger.warning(f"sys.argvからBATCH_JOB_IDを取得できませんでした: {str(e)}")
+    
+    # argparseでパースを試みる
     try:
         parser = argparse.ArgumentParser(add_help=False)  # add_help=Falseで既存の引数パーサーと競合しないようにする
         parser.add_argument('--batch-job-id', type=int, help='Batch job ID')

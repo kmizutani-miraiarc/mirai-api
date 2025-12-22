@@ -44,7 +44,7 @@ async def main():
     
     # 毎日実行するジョブを追加
     for job_key in daily_jobs:
-        job_id = await queue.add_job(job_key, max_retries=0)
+        job_id = await queue.add_job(job_key)
         if job_id:
             added_jobs.append(job_key)
             print(f"ジョブをキューに追加しました: {job_key} (ID: {job_id})")
@@ -52,7 +52,7 @@ async def main():
     # 毎週月曜日に実行するジョブを追加
     if today.weekday() == 0:  # 月曜日は0
         for job_key in weekly_jobs:
-            job_id = await queue.add_job(job_key, max_retries=0)
+            job_id = await queue.add_job(job_key)
             if job_id:
                 added_jobs.append(job_key)
                 print(f"ジョブをキューに追加しました: {job_key} (ID: {job_id})")
@@ -60,7 +60,7 @@ async def main():
     # 毎月1日に実行するジョブを追加
     if today.day == 1:
         for job_key in monthly_jobs:
-            job_id = await queue.add_job(job_key, max_retries=0)
+            job_id = await queue.add_job(job_key)
             if job_id:
                 added_jobs.append(job_key)
                 print(f"ジョブをキューに追加しました: {job_key} (ID: {job_id})")

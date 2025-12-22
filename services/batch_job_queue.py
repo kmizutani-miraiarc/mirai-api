@@ -58,13 +58,12 @@ class BatchJobQueue:
         }
     }
     
-    async def add_job(self, job_key: str, max_retries: int = 0) -> Optional[int]:
+    async def add_job(self, job_key: str) -> Optional[int]:
         """
         キューにジョブを追加
         
         Args:
             job_key: ジョブキー（BATCH_JOBSのキー）
-            max_retries: 最大リトライ回数
             
         Returns:
             追加されたジョブのID、失敗時はNone
@@ -92,9 +91,9 @@ class BatchJobQueue:
                 async with conn.cursor() as cursor:
                     await cursor.execute("""
                         INSERT INTO batch_job_queue 
-                        (job_name, script_path, status, priority, max_retries)
-                        VALUES (%s, %s, 'pending', %s, %s)
-                    """, (job_info['name'], full_script_path, job_info['priority'], max_retries))
+                        (job_name, script_path, status, priority)
+                        VALUES (%s, %s, 'pending', %s)
+                    """, (job_info['name'], full_script_path, job_info['priority']))
                     
                     job_id = cursor.lastrowid
                     await conn.commit()
@@ -266,80 +265,4 @@ class BatchJobQueue:
             logger.error(f"ジョブステータスの更新に失敗しました: {str(e)}", exc_info=True)
             return False
     
-    async def update_job_progress(
-        self,
-        job_id: int,
-        progress_message: Optional[str] = None,
-        progress_percentage: Optional[int] = None
-    ) -> bool:
-        """
-        ジョブの進捗を更新
-        
-        Args:
-            job_id: ジョブID
-            progress_message: 進捗メッセージ
-            progress_percentage: 進捗パーセンテージ（0-100）
-            
-        Returns:
-            成功時True、失敗時False
-        """
-        try:
-            logger.debug(f"進捗更新開始: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
-            await db_connection.create_pool()
-            if not db_connection.pool:
-                logger.error("データベース接続プールが作成されていません")
-                return False
-            
-            async with db_connection.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    # 進捗パーセンテージの範囲チェック
-                    if progress_percentage is not None:
-                        progress_percentage = max(0, min(100, progress_percentage))
-                    
-                    logger.debug(f"進捗更新SQL実行: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
-                    await cursor.execute("""
-                        UPDATE batch_job_queue
-                        SET progress_message = %s, progress_percentage = %s
-                        WHERE id = %s
-                    """, (progress_message, progress_percentage, job_id))
-                    
-                    rows_affected = cursor.rowcount
-                    logger.debug(f"進捗更新SQL実行完了: job_id={job_id}, rows_affected={rows_affected}")
-                    
-                    await conn.commit()
-                    logger.info(f"進捗更新成功: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
-                    return True
-        except Exception as e:
-            logger.error(f"ジョブ進捗の更新に失敗しました: job_id={job_id}, error={str(e)}", exc_info=True)
-            return False
-    
-    async def increment_retry_count(self, job_id: int) -> bool:
-        """
-        リトライ回数をインクリメント
-        
-        Args:
-            job_id: ジョブID
-            
-        Returns:
-            成功時True、失敗時False
-        """
-        try:
-            await db_connection.create_pool()
-            if not db_connection.pool:
-                logger.error("データベース接続プールが作成されていません")
-                return False
-            
-            async with db_connection.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute("""
-                        UPDATE batch_job_queue
-                        SET retry_count = retry_count + 1, status = 'pending'
-                        WHERE id = %s
-                    """, (job_id,))
-                    
-                    await conn.commit()
-                    return True
-        except Exception as e:
-            logger.error(f"リトライ回数の更新に失敗しました: {str(e)}", exc_info=True)
-            return False
 

@@ -107,29 +107,15 @@ class BatchJobWorker:
             
             if result['success']:
                 logger.info(f"ジョブが正常に完了しました: {job_name} (ID: {job_id})")
-                # 進捗を100%に更新してからステータスを完了に更新
-                await self.queue.update_job_progress(job_id, "完了", 100)
                 await self.queue.update_job_status(job_id, 'completed')
             else:
                 error_msg = result.get('error', 'Unknown error')
                 logger.error(f"ジョブの実行に失敗しました: {job_name} (ID: {job_id}) - {error_msg}")
-                
-                # リトライ可能かチェック
-                if job['retry_count'] < job['max_retries']:
-                    await self.queue.increment_retry_count(job_id)
-                    logger.info(f"ジョブをリトライキューに戻しました: {job_name} (ID: {job_id})")
-                else:
-                    await self.queue.update_job_status(job_id, 'failed', error_msg)
+                await self.queue.update_job_status(job_id, 'failed', error_msg)
         except Exception as e:
             error_msg = str(e)
             logger.error(f"ジョブの処理中にエラーが発生しました: {job_name} (ID: {job_id}) - {error_msg}", exc_info=True)
-            
-            # リトライ可能かチェック
-            if job['retry_count'] < job['max_retries']:
-                await self.queue.increment_retry_count(job_id)
-                logger.info(f"ジョブをリトライキューに戻しました: {job_name} (ID: {job_id})")
-            else:
-                await self.queue.update_job_status(job_id, 'failed', error_msg)
+            await self.queue.update_job_status(job_id, 'failed', error_msg)
     
     async def run_script(self, script_path: str) -> Dict[str, Any]:
         """
@@ -228,11 +214,17 @@ class BatchJobWorker:
             try:
                 # 環境変数を明示的に渡す（envパラメータを使用）
                 # また、コマンドライン引数としてもBATCH_JOB_IDを渡す（フォールバック用）
-                process = await asyncio.create_subprocess_exec(
+                cmd_args = [
                     self.python_path,
                     '-u',  # バッファリングを無効化
                     script_path,
                     '--batch-job-id', str(job_id),  # コマンドライン引数としても渡す
+                ]
+                logger.info(f"プロセスを起動します: コマンド={cmd_args}, ジョブID={job_id}")
+                logger.info(f"環境変数BATCH_JOB_ID={env.get('BATCH_JOB_ID')}")
+                
+                process = await asyncio.create_subprocess_exec(
+                    *cmd_args,
                     stdout=stdout_fd,
                     stderr=stderr_fd,
                     cwd=working_dir,

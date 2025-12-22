@@ -28,7 +28,7 @@ async def main():
     job_key = sys.argv[1]
     queue = BatchJobQueue()
     
-    job_id = await queue.add_job(job_key, max_retries=0)
+    job_id = await queue.add_job(job_key)
     
     if job_id:
         print(f"ジョブをキューに追加しました: {job_key} (ID: {job_id})")
