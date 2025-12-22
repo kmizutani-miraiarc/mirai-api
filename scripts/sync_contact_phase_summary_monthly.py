@@ -23,6 +23,7 @@ from hubspot.config import Config
 from hubspot.contacts import HubSpotContactsClient
 from hubspot.owners import HubSpotOwnersClient
 from database.connection import get_db_pool
+from utils.update_job_progress import update_progress
 import aiomysql
 
 # ログ設定
@@ -95,6 +96,7 @@ class ContactPhaseSummaryMonthlySync:
 
         try:
             logger.info("コンタクトフェーズ集計（月次）を開始します。")
+            await update_progress(None, "開始", 0)
             
             # 担当者キャッシュを事前に読み込む
             await self._load_owners_cache()
@@ -104,11 +106,11 @@ class ContactPhaseSummaryMonthlySync:
             
             # 今月末日を集計日として取得
             aggregation_date = self._get_month_end_date()
-            logger.info(f"集計日（月末日）: {aggregation_date}")
             
             # 対象担当者IDが取得できているか確認
             if not TARGET_OWNER_IDS:
-                logger.error("対象担当者IDが取得できませんでした。処理を終了します。")
+                logger.info("コンタクトフェーズ集計（月次）が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # コンタクトデータを取得して集計
@@ -121,16 +123,15 @@ class ContactPhaseSummaryMonthlySync:
                     for phase_value in PHASES:
                         total_count += phase_counts[owner_id].get(phase_type, {}).get(phase_value, 0)
             
-            logger.info(f"集計結果: 合計 {total_count}件")
-            
             if total_count == 0:
-                logger.warning("集計結果が0件です。データベースへの保存をスキップします。")
+                logger.info("コンタクトフェーズ集計（月次）が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # データベースに保存
             await self._save_to_database(aggregation_date, phase_counts)
             
-            logger.info("コンタクトフェーズ集計（月次）が完了しました。")
+            logger.info(f"コンタクトフェーズ集計（月次）が完了しました: 保存件数={total_count}件")
         except Exception as e:
             logger.error(f"コンタクトフェーズ集計（月次）中にエラーが発生しました: {str(e)}", exc_info=True)
         finally:
@@ -178,16 +179,9 @@ class ContactPhaseSummaryMonthlySync:
                     # 対象担当者のIDをリストに追加
                     if owner_name in TARGET_OWNERS:
                         TARGET_OWNER_IDS.append(owner_id)
-            logger.info(f"担当者キャッシュを読み込みました。件数: {len(self.owners_cache)}")
-            # デバッグ: 対象担当者のIDと名前をログ出力
-            logger.info("=== 対象担当者のIDと名前 ===")
-            for owner_id in TARGET_OWNER_IDS:
-                owner_name = self.owners_cache.get(owner_id, "不明")
-                logger.info(f"  担当者ID: {owner_id}, 担当者名: '{owner_name}'")
-            logger.info(f"対象担当者ID数: {len(TARGET_OWNER_IDS)}")
-            logger.info("=== 対象担当者のIDと名前終了 ===")
+            pass
         except Exception as e:
-            logger.error(f"担当者キャッシュの読み込みに失敗しました: {str(e)}")
+            logger.error(f"担当者キャッシュの読み込みに失敗しました: {str(e)}", exc_info=True)
 
     async def _load_property_names(self):
         """プロパティ名をラベルから取得し、オプションのマッピングも作成"""
@@ -196,12 +190,10 @@ class ContactPhaseSummaryMonthlySync:
             buy_phase_name = await self.contacts_client.find_property_by_label("仕入フェーズ")
             if buy_phase_name:
                 self.buy_phase_property_name = buy_phase_name
-                logger.info(f"仕入フェーズのプロパティ名: {buy_phase_name}")
                 # オプションを取得してマッピングを作成
                 await self._load_buy_phase_options(buy_phase_name)
             else:
                 # ラベルが見つからない場合は、デフォルトの名前を試す
-                logger.warning("ラベル「仕入フェーズ」のプロパティが見つかりません。デフォルト名を試します。")
                 self.buy_phase_property_name = "contractor_buy_phase"
                 await self._load_buy_phase_options("contractor_buy_phase")
             
@@ -209,17 +201,15 @@ class ContactPhaseSummaryMonthlySync:
             sell_phase_name = await self.contacts_client.find_property_by_label("販売フェーズ")
             if sell_phase_name:
                 self.sell_phase_property_name = sell_phase_name
-                logger.info(f"販売フェーズのプロパティ名: {sell_phase_name}")
                 # オプションを取得してマッピングを作成
                 await self._load_sell_phase_options(sell_phase_name)
             else:
                 # ラベルが見つからない場合は、デフォルトの名前を試す
-                logger.warning("ラベル「販売フェーズ」のプロパティが見つかりません。デフォルト名を試します。")
                 self.sell_phase_property_name = "contractor_sell_phase"
                 await self._load_sell_phase_options("contractor_sell_phase")
                 
         except Exception as e:
-            logger.error(f"プロパティ名の取得に失敗しました: {str(e)}")
+            logger.error(f"プロパティ名の取得に失敗しました: {str(e)}", exc_info=True)
             # エラーが発生した場合はデフォルト名を使用
             self.buy_phase_property_name = "contractor_buy_phase"
             self.sell_phase_property_name = "contractor_sell_phase"
@@ -238,12 +228,10 @@ class ContactPhaseSummaryMonthlySync:
                         # ラベルと値の両方からマッピングを作成
                         self.buy_phase_value_map[label] = phase_value
                         self.buy_phase_value_map[value] = phase_value
-                        logger.debug(f"仕入フェーズマッピング: '{label}' / '{value}' → '{phase_value}'")
-                logger.info(f"仕入フェーズのオプションを読み込みました。件数: {len(self.buy_phase_value_map)}")
             else:
-                logger.warning(f"仕入フェーズのオプションが取得できませんでした: {property_name}")
+                pass
         except Exception as e:
-            logger.error(f"仕入フェーズのオプション取得に失敗しました: {str(e)}")
+            logger.error(f"仕入フェーズのオプション取得に失敗しました: {str(e)}", exc_info=True)
 
     async def _load_sell_phase_options(self, property_name: str):
         """販売フェーズのオプションを取得してマッピングを作成"""
@@ -259,12 +247,10 @@ class ContactPhaseSummaryMonthlySync:
                         # ラベルと値の両方からマッピングを作成
                         self.sell_phase_value_map[label] = phase_value
                         self.sell_phase_value_map[value] = phase_value
-                        logger.debug(f"販売フェーズマッピング: '{label}' / '{value}' → '{phase_value}'")
-                logger.info(f"販売フェーズのオプションを読み込みました。件数: {len(self.sell_phase_value_map)}")
             else:
-                logger.warning(f"販売フェーズのオプションが取得できませんでした: {property_name}")
+                pass
         except Exception as e:
-            logger.error(f"販売フェーズのオプション取得に失敗しました: {str(e)}")
+            logger.error(f"販売フェーズのオプション取得に失敗しました: {str(e)}", exc_info=True)
 
     def _extract_phase_from_label(self, label: str) -> Optional[str]:
         """ラベルからフェーズ値を抽出（例：「S：成約した（金額OK＋条件OK）」→「S」）"""
@@ -317,7 +303,7 @@ class ContactPhaseSummaryMonthlySync:
             # その他のエラーのみ警告を出力
             error_str = str(e)
             if "404" not in error_str and "not found" not in error_str.lower():
-                logger.warning(f"担当者 {owner_id} の名前取得に失敗しました: {error_str}")
+                pass
             # 存在しない担当者もキャッシュに保存して、再度APIを呼ばないようにする
             self.owners_cache[owner_id] = None
         
@@ -334,10 +320,7 @@ class ContactPhaseSummaryMonthlySync:
         
         # 対象担当者IDが空の場合はエラー
         if not TARGET_OWNER_IDS:
-            logger.error("対象担当者IDが取得できませんでした。担当者キャッシュの読み込みを確認してください。")
             return phase_counts
-        
-        logger.info(f"対象担当者ID数: {len(TARGET_OWNER_IDS)}")
         
         # 対象担当者IDを初期化
         for owner_id in TARGET_OWNER_IDS:
@@ -381,11 +364,9 @@ class ContactPhaseSummaryMonthlySync:
                 )
                 
                 if not isinstance(response, dict):
-                    logger.warning("検索レスポンスが無効です。処理を終了します。")
                     break
                 
                 contacts: List[Dict[str, Any]] = response.get("results", [])
-                logger.info(f"{len(contacts)}件のコンタクトを取得しました。 (page={page})")
                 
                 if not contacts:
                     break
@@ -394,6 +375,11 @@ class ContactPhaseSummaryMonthlySync:
                     total_contacts += 1
                     await self._process_contact(contact, phase_counts, stats)
                     processed_contacts += 1
+                    
+                    # 進捗を更新（100件ごと、または最後）
+                    if total_contacts % 100 == 0 or (not response.get("paging", {}).get("next")):
+                        percentage = int((processed_contacts / max(total_contacts, 1)) * 100) if total_contacts > 0 else 0
+                        await update_progress(None, f"処理中: {processed_contacts}件 (集計成功: {stats.get('successfully_aggregated', 0)}件)", percentage)
                 
                 paging = response.get("paging", {})
                 next_after = paging.get("next", {}).get("after")
@@ -404,39 +390,8 @@ class ContactPhaseSummaryMonthlySync:
                     break
                     
             except Exception as e:
-                logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}")
+                logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}", exc_info=True)
                 break
-        
-        logger.info(f"コンタクトの集計が完了しました。総件数: {total_contacts}, 処理件数: {processed_contacts}")
-        logger.info("=" * 80)
-        logger.info("集計統計:")
-        logger.info(f"  - 総コンタクト数: {total_contacts:,}件")
-        logger.info(f"  - 処理済みコンタクト数: {processed_contacts:,}件")
-        logger.info("")
-        logger.info("スキップ理由:")
-        logger.info(f"  - 担当者IDなし: {stats.get('no_owner_id', 0):,}件")
-        logger.info(f"  - 対象外担当者: {stats.get('not_target_owner', 0):,}件")
-        logger.info(f"  - 仕入フェーズなし: {stats.get('no_buy_phase', 0):,}件")
-        logger.info(f"  - 販売フェーズなし: {stats.get('no_sell_phase', 0):,}件")
-        logger.info(f"  - 両方のフェーズなし: {stats.get('both_phases_missing', 0):,}件")
-        logger.info("")
-        logger.info(f"  - 集計成功: {stats.get('successfully_aggregated', 0):,}件")
-        logger.info("=" * 80)
-        
-        # 集計結果のサマリーをログ出力
-        logger.info("=== 集計結果サマリー（集計後） ===")
-        total_aggregated = 0
-        for owner_id in TARGET_OWNER_IDS:
-            owner_name = self.owners_cache.get(owner_id, owner_id)
-            owner_total = 0
-            for phase_type in ['buy', 'sell']:
-                for phase_value in PHASES:
-                    owner_total += phase_counts[owner_id].get(phase_type, {}).get(phase_value, 0)
-            total_aggregated += owner_total
-            if owner_total > 0:
-                logger.info(f"担当者: {owner_name} (ID: {owner_id}) - 合計 {owner_total}件")
-        logger.info(f"全体の集計件数: {total_aggregated}件")
-        logger.info("=== 集計結果サマリー終了 ===")
         
         return phase_counts
 
@@ -574,7 +529,6 @@ class ContactPhaseSummaryMonthlySync:
                 """
                 await cursor.execute(delete_query, (aggregation_date,))
                 deleted_count = cursor.rowcount
-                logger.info(f"既存データを削除しました。件数: {deleted_count}")
                 
                 # 新しいデータを挿入
                 try:
@@ -600,28 +554,11 @@ class ContactPhaseSummaryMonthlySync:
                                     insert_count += 1
                     
                     await conn.commit()
-                    logger.info(f"データベースに保存しました。件数: {insert_count}")
+                    await update_progress(None, f"完了: 保存件数={insert_count}件", 100)
                 except Exception as e:
                     logger.error(f"データベースへの保存中にエラーが発生しました: {str(e)}", exc_info=True)
                     await conn.rollback()
                     raise
-                
-                # 集計結果のサマリーをログ出力
-                logger.info("=== 集計結果サマリー ===")
-                for owner_id in TARGET_OWNER_IDS:
-                    owner_name = self.owners_cache.get(owner_id, owner_id)
-                    logger.info(f"担当者: {owner_name} (ID: {owner_id})")
-                    for phase_type in ['buy', 'sell']:
-                        phase_type_display = "仕入" if phase_type == 'buy' else "販売"
-                        phase_dict = phase_counts[owner_id].get(phase_type, {})
-                        total = sum(phase_dict.values())
-                        if total > 0:
-                            logger.info(f"  {phase_type_display}フェーズ: 合計 {total}件")
-                            for phase_value in PHASES:
-                                count = phase_dict.get(phase_value, 0)
-                                if count > 0:
-                                    logger.info(f"    - {phase_value}: {count}件")
-                logger.info("=== 集計結果サマリー終了 ===")
 
 
 async def main():

@@ -80,6 +80,7 @@ class PurchaseAchievementsSync:
             return settlement_ids, contract_ids
             
         except Exception as e:
+            logger.error(f"ステージIDの取得に失敗しました: {str(e)}", exc_info=True)
             raise
     
     async def get_deals_by_stages(self, stage_ids: List[str]) -> List[Dict[str, Any]]:
@@ -138,6 +139,7 @@ class PurchaseAchievementsSync:
             return all_deals
             
         except Exception as e:
+            logger.error(f"取引の取得に失敗しました: {str(e)}", exc_info=True)
             raise
     
     async def get_bukken_from_deal(self, deal_id: str) -> Optional[Dict[str, Any]]:
@@ -334,6 +336,7 @@ class PurchaseAchievementsSync:
             return True
             
         except Exception as e:
+            logger.error(f"取引 {deal.get('id', 'Unknown')} の処理に失敗しました: {str(e)}", exc_info=True)
             return False
     
     async def sync(self):
@@ -378,6 +381,7 @@ class PurchaseAchievementsSync:
                     else:
                         failure_count += 1
                 except Exception as e:
+                    logger.error(f"取引処理中にエラーが発生しました: {str(e)}", exc_info=True)
                     failure_count += 1
                 
                 # 進捗を更新（10件ごと、または最後）

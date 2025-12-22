@@ -22,6 +22,7 @@ from hubspot.config import Config
 from hubspot.contacts import HubSpotContactsClient
 from hubspot.owners import HubSpotOwnersClient
 from database.connection import get_db_pool
+from utils.update_job_progress import update_progress
 import aiomysql
 
 # ログ設定
@@ -92,17 +93,18 @@ class ContactScoringSummarySync:
 
         try:
             logger.info("コンタクトスコアリング（仕入）集計を開始します。")
+            await update_progress(None, "開始", 0)
             
             # 担当者キャッシュを事前に読み込む
             await self._load_owners_cache()
             
             # 今週の月曜日を集計日として取得
             aggregation_date = self._get_this_week_monday()
-            logger.info(f"集計日: {aggregation_date}")
             
             # 対象担当者IDが取得できているか確認
             if not TARGET_OWNER_IDS:
-                logger.error("対象担当者IDが取得できませんでした。処理を終了します。")
+                logger.info("コンタクトスコアリング（仕入）集計が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # コンタクトデータを取得して集計
@@ -116,16 +118,15 @@ class ContactScoringSummarySync:
                     counts = pattern_counts.get(owner_id, {})
                     total_count += sum(counts.values())
             
-            logger.info(f"集計結果: 合計 {total_count}件")
-            
             if total_count == 0:
-                logger.warning("集計結果が0件です。データベースへの保存をスキップします。")
+                logger.info("コンタクトスコアリング（仕入）集計が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # データベースに保存
             await self._save_to_database(aggregation_date, scoring_counts)
             
-            logger.info("コンタクトスコアリング（仕入）集計が完了しました。")
+            logger.info(f"コンタクトスコアリング（仕入）集計が完了しました: 保存件数={total_count}件")
         except Exception as e:
             logger.error(f"コンタクトスコアリング（仕入）集計中にエラーが発生しました: {str(e)}", exc_info=True)
         finally:
@@ -165,10 +166,9 @@ class ContactScoringSummarySync:
                     # 対象担当者のIDをリストに追加
                     if owner_name in TARGET_OWNERS:
                         TARGET_OWNER_IDS.append(owner_id)
-            logger.info(f"担当者キャッシュを読み込みました。件数: {len(self.owners_cache)}")
-            logger.info(f"対象担当者ID数: {len(TARGET_OWNER_IDS)}")
+            pass
         except Exception as e:
-            logger.error(f"担当者キャッシュの読み込みに失敗しました: {str(e)}")
+            pass
 
     def _get_array_property(self, property_value: Any) -> List[str]:
         """プロパティを配列として取得（HubSpotの複数選択フィールド用）"""
@@ -301,10 +301,7 @@ class ContactScoringSummarySync:
         
         # 対象担当者IDが空の場合はエラー
         if not TARGET_OWNER_IDS:
-            logger.error("対象担当者IDが取得できませんでした。担当者キャッシュの読み込みを確認してください。")
             return scoring_counts
-        
-        logger.info(f"対象担当者ID数: {len(TARGET_OWNER_IDS)}")
         
         # 対象担当者IDを各パターンで初期化
         for pattern_type in ['all', 'buy', 'sell', 'buy_or_sell']:
@@ -352,11 +349,9 @@ class ContactScoringSummarySync:
                 )
                 
                 if not isinstance(response, dict):
-                    logger.warning("検索レスポンスが無効です。処理を終了します。")
                     break
                 
                 contacts: List[Dict[str, Any]] = response.get("results", [])
-                logger.info(f"{len(contacts)}件のコンタクトを取得しました。 (page={page})")
                 
                 if not contacts:
                     break
@@ -369,6 +364,11 @@ class ContactScoringSummarySync:
                     for pattern_type in patterns:
                         await self._process_contact(contact, scoring_counts[pattern_type], stats, pattern_type)
                     processed_contacts += 1
+                    
+                    # 進捗を更新（100件ごと、または最後）
+                    if total_contacts % 100 == 0 or (not response.get("paging", {}).get("next")):
+                        percentage = int((processed_contacts / max(total_contacts, 1)) * 100) if total_contacts > 0 else 0
+                        await update_progress(None, f"処理中: {processed_contacts}件 (集計成功: {stats.get('successfully_aggregated', 0)}件)", percentage)
                 
                 paging = response.get("paging", {})
                 next_after = paging.get("next", {}).get("after")
@@ -379,21 +379,8 @@ class ContactScoringSummarySync:
                     break
                     
             except Exception as e:
-                logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}")
+                logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}", exc_info=True)
                 break
-        
-        logger.info(f"コンタクトの集計が完了しました。総件数: {total_contacts}, 処理件数: {processed_contacts}")
-        logger.info("=" * 80)
-        logger.info("集計統計:")
-        logger.info(f"  - 総コンタクト数: {total_contacts:,}件")
-        logger.info(f"  - 処理済みコンタクト数: {processed_contacts:,}件")
-        logger.info("")
-        logger.info("スキップ理由:")
-        logger.info(f"  - 担当者IDなし: {stats.get('no_owner_id', 0):,}件")
-        logger.info(f"  - 対象外担当者: {stats.get('not_target_owner', 0):,}件")
-        logger.info("")
-        logger.info(f"  - 集計成功: {stats.get('successfully_aggregated', 0):,}件")
-        logger.info("=" * 80)
         
         return scoring_counts
 
@@ -470,7 +457,6 @@ class ContactScoringSummarySync:
                 """
                 await cursor.execute(delete_query, (aggregation_date,))
                 deleted_count = cursor.rowcount
-                logger.info(f"既存データを削除しました。件数: {deleted_count}")
                 
                 # 新しいデータを挿入
                 try:
@@ -515,29 +501,11 @@ class ContactScoringSummarySync:
                             insert_count += 1
                     
                     await conn.commit()
-                    logger.info(f"データベースに保存しました。件数: {insert_count}")
+                    await update_progress(None, f"完了: 保存件数={insert_count}件", 100)
                 except Exception as e:
                     logger.error(f"データベースへの保存中にエラーが発生しました: {str(e)}", exc_info=True)
                     await conn.rollback()
                     raise
-                
-                # 集計結果のサマリーをログ出力
-                logger.info("=== 集計結果サマリー ===")
-                for pattern_type in ['all', 'buy', 'sell', 'buy_or_sell']:
-                    pattern_counts = scoring_counts.get(pattern_type, {})
-                    logger.info(f"パターン: {pattern_type}")
-                    for owner_id in TARGET_OWNER_IDS:
-                        owner_name = self.owners_cache.get(owner_id, owner_id)
-                        counts = pattern_counts.get(owner_id, {})
-                        logger.info(f"  担当者: {owner_name} (ID: {owner_id})")
-                        logger.info(f"    業種: {counts.get('industry', 0)}件")
-                        logger.info(f"    取扱種別: {counts.get('property_type', 0)}件")
-                        logger.info(f"    取扱エリア: {counts.get('area', 0)}件")
-                        logger.info(f"    エリアカテゴリ: {counts.get('area_category', 0)}件")
-                        logger.info(f"    グロス: {counts.get('gross', 0)}件")
-                        logger.info(f"    ５項目済: {counts.get('all_five_items', 0)}件")
-                        logger.info(f"    対象ターゲット: {counts.get('target_audience', 0)}件")
-                logger.info("=== 集計結果サマリー終了 ===")
 
 
 async def main():

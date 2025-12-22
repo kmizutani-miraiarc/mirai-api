@@ -436,6 +436,7 @@ class ProfitManagementSync:
             return True
             
         except Exception as e:
+            logger.error(f"取引 {deal.get('id', 'Unknown')} の処理に失敗しました: {str(e)}", exc_info=True)
             return False
     
     async def sync(self):
@@ -476,6 +477,7 @@ class ProfitManagementSync:
                     else:
                         failure_count += 1
                 except Exception as e:
+                    logger.error(f"取引処理中にエラーが発生しました (取引ID: {deal.get('id', 'Unknown')}): {str(e)}", exc_info=True)
                     failure_count += 1
                 
                 # 進捗を更新（10件ごと、または最後）
@@ -487,6 +489,7 @@ class ProfitManagementSync:
             await update_progress(None, f"完了: 成功={success_count}件, 失敗={failure_count}件", 100)
             
         except Exception as e:
+            logger.error(f"粗利按分管理データの同期に失敗しました: {str(e)}", exc_info=True)
             raise
         finally:
             # データベース接続を閉じる（この呼び出しで作成した場合のみ）

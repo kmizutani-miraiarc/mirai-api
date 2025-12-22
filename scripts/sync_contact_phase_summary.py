@@ -380,6 +380,7 @@ class ContactPhaseSummarySync:
                     break
                     
             except Exception as e:
+                logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}", exc_info=True)
                 break
         
         return phase_counts
@@ -546,6 +547,7 @@ class ContactPhaseSummarySync:
                     await conn.commit()
                     await update_progress(None, f"完了: 保存件数={insert_count}件", 100)
                 except Exception as e:
+                    logger.error(f"データベースへの保存中にエラーが発生しました: {str(e)}", exc_info=True)
                     await conn.rollback()
                     raise
 
