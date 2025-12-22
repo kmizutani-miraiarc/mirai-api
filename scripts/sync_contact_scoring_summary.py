@@ -5,6 +5,7 @@ HubSpotコンタクトのスコアリング（仕入）集計バッチスクリ�
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -105,7 +106,7 @@ class ContactScoringSummarySync:
                 return
             
             # コンタクトデータを取得して集計
-            scoring_counts = await self._aggregate_contact_scoring()
+            scoring_counts, scoring_contact_ids = await self._aggregate_contact_scoring()
             
             # 集計結果を確認
             total_count = 0
@@ -120,7 +121,7 @@ class ContactScoringSummarySync:
                 return
             
             # データベースに保存
-            await self._save_to_database(aggregation_date, scoring_counts)
+            await self._save_to_database(aggregation_date, scoring_counts, scoring_contact_ids)
             
             logger.info(f"コンタクトスコアリング（仕入）集計が完了しました: 保存件数={total_count}件")
         except Exception as e:
@@ -250,10 +251,12 @@ class ContactScoringSummarySync:
         # 除外されない場合が対象ターゲット
         return not should_exclude
 
-    async def _aggregate_contact_scoring(self) -> Dict[str, Dict[str, Dict[str, int]]]:
+    async def _aggregate_contact_scoring(self) -> tuple[Dict[str, Dict[str, Dict[str, int]]], Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]]]:
         """
         コンタクトデータを取得してスコアリング項目別に集計（パターン別）
-        戻り値: {pattern_type: {owner_id: {metric: count}}}
+        戻り値: (scoring_counts, scoring_contact_ids)
+        scoring_counts: {pattern_type: {owner_id: {metric: count}}}
+        scoring_contact_ids: {pattern_type: {owner_id: {metric: [{"id": contact_id, "name": contact_name}, ...]}}}
         """
         # パターンごとの集計データ
         scoring_counts: Dict[str, Dict[str, Dict[str, int]]] = {
@@ -295,9 +298,49 @@ class ContactScoringSummarySync:
             })
         }
         
+        # パターンごとのコンタクトIDデータ
+        scoring_contact_ids: Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]] = {
+            'all': defaultdict(lambda: {
+                'industry': [],
+                'property_type': [],
+                'area': [],
+                'area_category': [],
+                'gross': [],
+                'all_five_items': [],
+                'target_audience': []
+            }),
+            'buy': defaultdict(lambda: {
+                'industry': [],
+                'property_type': [],
+                'area': [],
+                'area_category': [],
+                'gross': [],
+                'all_five_items': [],
+                'target_audience': []
+            }),
+            'sell': defaultdict(lambda: {
+                'industry': [],
+                'property_type': [],
+                'area': [],
+                'area_category': [],
+                'gross': [],
+                'all_five_items': [],
+                'target_audience': []
+            }),
+            'buy_or_sell': defaultdict(lambda: {
+                'industry': [],
+                'property_type': [],
+                'area': [],
+                'area_category': [],
+                'gross': [],
+                'all_five_items': [],
+                'target_audience': []
+            })
+        }
+        
         # 対象担当者IDが空の場合はエラー
         if not TARGET_OWNER_IDS:
-            return scoring_counts
+            return scoring_counts, scoring_contact_ids
         
         # 対象担当者IDを各パターンで初期化
         for pattern_type in ['all', 'buy', 'sell', 'buy_or_sell']:
@@ -311,6 +354,15 @@ class ContactScoringSummarySync:
                     'all_five_items': 0,
                     'target_audience': 0
                 }
+                scoring_contact_ids[pattern_type][owner_id] = {
+                    'industry': [],
+                    'property_type': [],
+                    'area': [],
+                    'area_category': [],
+                    'gross': [],
+                    'all_five_items': [],
+                    'target_audience': []
+                }
         
         # 集計統計
         stats = {
@@ -323,6 +375,8 @@ class ContactScoringSummarySync:
         # 必要なプロパティを指定
         properties = [
             "hubspot_owner_id",
+            "firstname",
+            "lastname",
             "contractor_industry",
             "contractor_property_type",
             "contractor_area",
@@ -358,7 +412,7 @@ class ContactScoringSummarySync:
                     patterns = self._get_contact_patterns(contact)
                     # 各パターンごとに処理
                     for pattern_type in patterns:
-                        await self._process_contact(contact, scoring_counts[pattern_type], stats, pattern_type)
+                        await self._process_contact(contact, scoring_counts[pattern_type], scoring_contact_ids[pattern_type], stats, pattern_type)
                     processed_contacts += 1
                     
                     # 進捗を更新（100件ごと、または最後）
@@ -377,18 +431,29 @@ class ContactScoringSummarySync:
                 logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}", exc_info=True)
                 break
         
-        return scoring_counts
+        return scoring_counts, scoring_contact_ids
 
     async def _process_contact(
         self,
         contact: Dict[str, Any],
         scoring_counts: Dict[str, Dict[str, int]],
+        scoring_contact_ids: Dict[str, Dict[str, List[Dict[str, str]]]],
         stats: Dict[str, int],
         pattern_type: str = 'all'
     ):
         """1件のコンタクトを処理してスコアリング集計に追加"""
         properties = contact.get("properties", {})
         stats["total_contacts"] += 1
+        
+        # コンタクトIDを取得
+        contact_id = contact.get("id")
+        if not contact_id:
+            return
+        
+        # コンタクト名を取得
+        firstname = (properties.get("firstname") or "").strip() if properties.get("firstname") else ""
+        lastname = (properties.get("lastname") or "").strip() if properties.get("lastname") else ""
+        contact_name = f"{lastname} {firstname}".strip() if lastname or firstname else contact_id
         
         # 担当者IDを取得
         owner_id = properties.get("hubspot_owner_id")
@@ -414,33 +479,41 @@ class ContactScoringSummarySync:
         # 各項目の集計
         if has_industry:
             scoring_counts[owner_id]['industry'] += 1
+            scoring_contact_ids[owner_id]['industry'].append({"id": contact_id, "name": contact_name})
         
         if has_property_type:
             scoring_counts[owner_id]['property_type'] += 1
+            scoring_contact_ids[owner_id]['property_type'].append({"id": contact_id, "name": contact_name})
         
         if has_area:
             scoring_counts[owner_id]['area'] += 1
+            scoring_contact_ids[owner_id]['area'].append({"id": contact_id, "name": contact_name})
         
         if has_area_category:
             scoring_counts[owner_id]['area_category'] += 1
+            scoring_contact_ids[owner_id]['area_category'].append({"id": contact_id, "name": contact_name})
         
         if has_gross:
             scoring_counts[owner_id]['gross'] += 1
+            scoring_contact_ids[owner_id]['gross'].append({"id": contact_id, "name": contact_name})
         
         # ５項目すべてに入力がある場合
         if has_industry and has_property_type and has_area and has_area_category and has_gross:
             scoring_counts[owner_id]['all_five_items'] += 1
+            scoring_contact_ids[owner_id]['all_five_items'].append({"id": contact_id, "name": contact_name})
         
         # 対象ターゲットの判定
         if self._is_target_audience(properties):
             scoring_counts[owner_id]['target_audience'] += 1
+            scoring_contact_ids[owner_id]['target_audience'].append({"id": contact_id, "name": contact_name})
         
         stats["successfully_aggregated"] += 1
 
     async def _save_to_database(
         self,
         aggregation_date: date,
-        scoring_counts: Dict[str, Dict[str, Dict[str, int]]]
+        scoring_counts: Dict[str, Dict[str, Dict[str, int]]],
+        scoring_contact_ids: Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]]
     ):
         """集計結果をデータベースに保存（パターン別）"""
         async with self.db_pool.acquire() as conn:
@@ -458,13 +531,16 @@ class ContactScoringSummarySync:
                     insert_query = """
                         INSERT INTO contact_scoring_summary
                         (aggregation_date, owner_id, owner_name, pattern_type, industry_count, property_type_count, 
-                         area_count, area_category_count, gross_count, all_five_items_count, target_audience_count)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         area_count, area_category_count, gross_count, all_five_items_count, target_audience_count,
+                         industry_contact_ids, property_type_contact_ids, area_contact_ids, area_category_contact_ids,
+                         gross_contact_ids, all_five_items_contact_ids, target_audience_contact_ids)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     
                     insert_count = 0
                     for pattern_type in ['all', 'buy', 'sell', 'buy_or_sell']:
                         pattern_counts = scoring_counts.get(pattern_type, {})
+                        pattern_contact_ids = scoring_contact_ids.get(pattern_type, {})
                         for owner_id in TARGET_OWNER_IDS:
                             owner_name = self.owners_cache.get(owner_id, owner_id)
                             counts = pattern_counts.get(owner_id, {
@@ -476,6 +552,24 @@ class ContactScoringSummarySync:
                                 'all_five_items': 0,
                                 'target_audience': 0
                             })
+                            contact_ids_dict = pattern_contact_ids.get(owner_id, {
+                                'industry': [],
+                                'property_type': [],
+                                'area': [],
+                                'area_category': [],
+                                'gross': [],
+                                'all_five_items': [],
+                                'target_audience': []
+                            })
+                            
+                            # コンタクトIDと名前をJSON形式に変換
+                            industry_contact_ids_json = json.dumps(contact_ids_dict['industry'], ensure_ascii=False) if contact_ids_dict['industry'] else None
+                            property_type_contact_ids_json = json.dumps(contact_ids_dict['property_type'], ensure_ascii=False) if contact_ids_dict['property_type'] else None
+                            area_contact_ids_json = json.dumps(contact_ids_dict['area'], ensure_ascii=False) if contact_ids_dict['area'] else None
+                            area_category_contact_ids_json = json.dumps(contact_ids_dict['area_category'], ensure_ascii=False) if contact_ids_dict['area_category'] else None
+                            gross_contact_ids_json = json.dumps(contact_ids_dict['gross'], ensure_ascii=False) if contact_ids_dict['gross'] else None
+                            all_five_items_contact_ids_json = json.dumps(contact_ids_dict['all_five_items'], ensure_ascii=False) if contact_ids_dict['all_five_items'] else None
+                            target_audience_contact_ids_json = json.dumps(contact_ids_dict['target_audience'], ensure_ascii=False) if contact_ids_dict['target_audience'] else None
                             
                             await cursor.execute(
                                 insert_query,
@@ -490,7 +584,14 @@ class ContactScoringSummarySync:
                                     counts['area_category'],
                                     counts['gross'],
                                     counts['all_five_items'],
-                                    counts['target_audience']
+                                    counts['target_audience'],
+                                    industry_contact_ids_json,
+                                    property_type_contact_ids_json,
+                                    area_contact_ids_json,
+                                    area_category_contact_ids_json,
+                                    gross_contact_ids_json,
+                                    all_five_items_contact_ids_json,
+                                    target_audience_contact_ids_json
                                 )
                             )
                             insert_count += 1

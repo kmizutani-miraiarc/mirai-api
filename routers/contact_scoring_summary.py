@@ -125,3 +125,34 @@ async def get_comparison(
         logger.error(f"スコアリング（仕入）集計データ（前週比）取得エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"スコアリング（仕入）集計データ（前週比）の取得に失敗しました: {str(e)}")
 
+
+@router.get("/contact-ids", summary="コンタクトIDリスト取得（スコアリング）")
+async def get_contact_ids(
+    aggregation_date: str = Query(..., description="集計日 (YYYY-MM-DD形式)"),
+    owner_id: str = Query(..., description="担当者ID"),
+    pattern_type: str = Query(..., description="パターン区分 (all, buy, sell, buy_or_sell)"),
+    metric: str = Query(..., description="集計項目 (industry, property_type, area, area_category, gross, all_five_items, target_audience)"),
+    service: ContactScoringSummaryService = Depends(get_contact_scoring_summary_service),
+    api_key_info=Depends(verify_api_key)
+):
+    """指定した条件のコンタクトIDリストとHubSpotリンクを取得します（スコアリング）"""
+    try:
+        try:
+            date_obj = date.fromisoformat(aggregation_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="無効な日付形式です。YYYY-MM-DD形式で指定してください。")
+        
+        if pattern_type not in ['all', 'buy', 'sell', 'buy_or_sell']:
+            raise HTTPException(status_code=400, detail="pattern_typeは 'all', 'buy', 'sell', 'buy_or_sell' のいずれかである必要があります。")
+        
+        valid_metrics = ['industry', 'property_type', 'area', 'area_category', 'gross', 'all_five_items', 'target_audience']
+        if metric not in valid_metrics:
+            raise HTTPException(status_code=400, detail=f"metricは {', '.join(valid_metrics)} のいずれかである必要があります。")
+        
+        return await service.get_contact_ids(date_obj, owner_id, pattern_type, metric)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"コンタクトIDリスト取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"コンタクトIDリストの取得に失敗しました: {str(e)}")
+

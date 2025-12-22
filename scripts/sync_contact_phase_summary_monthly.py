@@ -5,6 +5,7 @@ HubSpotコンタクトのフェーズ集計バッチスクリプト（月次）
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -111,7 +112,7 @@ class ContactPhaseSummaryMonthlySync:
                 return
             
             # コンタクトデータを取得して集計
-            phase_counts = await self._aggregate_contact_phases()
+            phase_counts, phase_contact_ids = await self._aggregate_contact_phases()
             
             # 集計結果を確認
             total_count = 0
@@ -125,7 +126,7 @@ class ContactPhaseSummaryMonthlySync:
                 return
             
             # データベースに保存
-            await self._save_to_database(aggregation_date, phase_counts)
+            await self._save_to_database(aggregation_date, phase_counts, phase_contact_ids)
             
             logger.info(f"コンタクトフェーズ集計（月次）が完了しました: 保存件数={total_count}件")
         except Exception as e:
@@ -305,23 +306,28 @@ class ContactPhaseSummaryMonthlySync:
         
         return None
 
-    async def _aggregate_contact_phases(self) -> Dict[str, Dict[str, Dict[str, int]]]:
+    async def _aggregate_contact_phases(self) -> tuple[Dict[str, Dict[str, Dict[str, int]]], Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]]]:
         """
         コンタクトデータを取得してフェーズ別に集計
-        戻り値: {owner_id: {phase_type: {phase_value: count}}}
+        戻り値: (phase_counts, phase_contact_ids)
+        phase_counts: {owner_id: {phase_type: {phase_value: count}}}
+        phase_contact_ids: {owner_id: {phase_type: {phase_value: [{"id": contact_id, "name": contact_name}, ...]}}}
         phase_type: 'buy' または 'sell'
         phase_value: 'S', 'A', 'B', 'C', 'D', 'Z'（空欄の場合は集計しない）
         """
         phase_counts: Dict[str, Dict[str, Dict[str, int]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+        phase_contact_ids: Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         
         # 対象担当者IDが空の場合はエラー
         if not TARGET_OWNER_IDS:
-            return phase_counts
+            return phase_counts, phase_contact_ids
         
         # 対象担当者IDを初期化
         for owner_id in TARGET_OWNER_IDS:
             phase_counts[owner_id]['buy'] = defaultdict(int)
             phase_counts[owner_id]['sell'] = defaultdict(int)
+            phase_contact_ids[owner_id]['buy'] = defaultdict(list)
+            phase_contact_ids[owner_id]['sell'] = defaultdict(list)
         
         # 集計統計
         stats = {
@@ -336,7 +342,7 @@ class ContactPhaseSummaryMonthlySync:
         }
         
         # 必要なプロパティを指定（プロパティ名が確定している場合はそれを使用）
-        properties = ["hubspot_owner_id"]
+        properties = ["hubspot_owner_id", "firstname", "lastname"]
         if self.buy_phase_property_name:
             properties.append(self.buy_phase_property_name)
         else:
@@ -369,7 +375,7 @@ class ContactPhaseSummaryMonthlySync:
                 
                 for contact in contacts:
                     total_contacts += 1
-                    await self._process_contact(contact, phase_counts, stats)
+                    await self._process_contact(contact, phase_counts, phase_contact_ids, stats)
                     processed_contacts += 1
                     
                     # 進捗を更新（100件ごと、または最後）
@@ -388,17 +394,28 @@ class ContactPhaseSummaryMonthlySync:
                 logger.error(f"コンタクト取得中にエラーが発生しました: {str(e)}", exc_info=True)
                 break
         
-        return phase_counts
+        return phase_counts, phase_contact_ids
 
     async def _process_contact(
         self,
         contact: Dict[str, Any],
         phase_counts: Dict[str, Dict[str, Dict[str, int]]],
+        phase_contact_ids: Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]],
         stats: Dict[str, int]
     ):
         """1件のコンタクトを処理してフェーズ集計に追加"""
         properties = contact.get("properties", {})
         stats["total_contacts"] += 1
+        
+        # コンタクトIDを取得
+        contact_id = contact.get("id")
+        if not contact_id:
+            return
+        
+        # コンタクト名を取得
+        firstname = (properties.get("firstname") or "").strip() if properties.get("firstname") else ""
+        lastname = (properties.get("lastname") or "").strip() if properties.get("lastname") else ""
+        contact_name = f"{lastname} {firstname}".strip() if lastname or firstname else contact_id
         
         # 担当者IDを取得
         owner_id = properties.get("hubspot_owner_id")
@@ -496,11 +513,13 @@ class ContactPhaseSummaryMonthlySync:
             # 仕入フェーズが有効な場合：仕入フェーズを集計
             if buy_phase is not None:
                 phase_counts[owner_id]['buy'][buy_phase] += 1
+                phase_contact_ids[owner_id]['buy'][buy_phase].append({"id": contact_id, "name": contact_name})
                 stats["successfully_aggregated"] += 1
             
             # 販売フェーズが有効な場合：販売フェーズを集計
             if sell_phase is not None:
                 phase_counts[owner_id]['sell'][sell_phase] += 1
+                phase_contact_ids[owner_id]['sell'][sell_phase].append({"id": contact_id, "name": contact_name})
                 stats["successfully_aggregated"] += 1
             
             # 統計を更新（空欄のフェーズがある場合）
@@ -512,7 +531,8 @@ class ContactPhaseSummaryMonthlySync:
     async def _save_to_database(
         self,
         aggregation_date: date,
-        phase_counts: Dict[str, Dict[str, Dict[str, int]]]
+        phase_counts: Dict[str, Dict[str, Dict[str, int]]],
+        phase_contact_ids: Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]]
     ):
         """集計結果をデータベースに保存"""
         async with self.db_pool.acquire() as conn:
@@ -529,8 +549,8 @@ class ContactPhaseSummaryMonthlySync:
                 try:
                     insert_query = """
                         INSERT INTO contact_phase_summary_monthly
-                        (aggregation_date, owner_id, owner_name, phase_type, phase_value, count)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        (aggregation_date, owner_id, owner_name, phase_type, phase_value, count, contact_ids)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """
                     
                     insert_count = 0
@@ -542,9 +562,13 @@ class ContactPhaseSummaryMonthlySync:
                             for phase_value in PHASES:
                                 count = phase_counts[owner_id].get(phase_type, {}).get(phase_value, 0)
                                 if count > 0:
+                                    # コンタクトIDと名前をJSON形式に変換
+                                    contact_ids_list = phase_contact_ids[owner_id].get(phase_type, {}).get(phase_value, [])
+                                    contact_ids_json = json.dumps(contact_ids_list, ensure_ascii=False) if contact_ids_list else None
+                                    
                                     await cursor.execute(
                                         insert_query,
-                                        (aggregation_date, owner_id, owner_name, phase_type, phase_value, count)
+                                        (aggregation_date, owner_id, owner_name, phase_type, phase_value, count, contact_ids_json)
                                     )
                                     insert_count += 1
                     

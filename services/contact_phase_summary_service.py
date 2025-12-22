@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from datetime import date, timedelta
 import aiomysql
@@ -272,4 +274,75 @@ class ContactPhaseSummaryService:
                     comparison[owner_id][phase_type][phase_value] = diff
         
         return comparison
+
+    async def get_contact_ids(
+        self,
+        aggregation_date: date,
+        owner_id: str,
+        phase_type: str,
+        phase_value: str
+    ) -> Dict[str, Any]:
+        """
+        指定した条件のコンタクトIDリストを取得
+        
+        Args:
+            aggregation_date: 集計日
+            owner_id: 担当者ID
+            phase_type: フェーズ区分（'buy' または 'sell'）
+            phase_value: フェーズ値（'S', 'A', 'B', 'C', 'D', 'Z'）
+        
+        Returns:
+            コンタクトIDリストとHubSpotリンク
+        """
+        async with self.db_pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                query = """
+                    SELECT contact_ids
+                    FROM contact_phase_summary
+                    WHERE aggregation_date = %s
+                      AND owner_id = %s
+                      AND phase_type = %s
+                      AND phase_value = %s
+                """
+                await cursor.execute(query, (aggregation_date, owner_id, phase_type, phase_value))
+                result = await cursor.fetchone()
+                
+                if not result or not result.get('contact_ids'):
+                    return {
+                        "contacts": []
+                    }
+                
+                # JSON形式のコンタクトIDと名前をパース
+                contact_ids_str = result['contact_ids']
+                try:
+                    # JSON形式をパース
+                    contacts_data = json.loads(contact_ids_str)
+                    if not isinstance(contacts_data, list):
+                        contacts_data = []
+                except (json.JSONDecodeError, TypeError):
+                    # 古いCSV形式の場合は空リストを返す（後方互換性のため）
+                    contacts_data = []
+                
+                # HubSpotリンクを生成
+                hubspot_id = os.getenv('HUBSPOT_ID', '')
+                contacts = []
+                for contact_data in contacts_data:
+                    if isinstance(contact_data, dict):
+                        contact_id = contact_data.get('id', '')
+                        contact_name = contact_data.get('name', contact_id)
+                    else:
+                        # 古い形式（文字列のみ）の場合
+                        contact_id = str(contact_data)
+                        contact_name = contact_id
+                    
+                    if contact_id:
+                        contacts.append({
+                            "id": contact_id,
+                            "name": contact_name,
+                            "hubspot_link": f"https://app.hubspot.com/contacts/{hubspot_id}/contact/{contact_id}"
+                        })
+                
+                return {
+                    "contacts": contacts
+                }
 

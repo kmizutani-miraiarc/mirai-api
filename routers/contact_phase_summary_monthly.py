@@ -97,3 +97,33 @@ async def get_all_summaries(
         logger.error(f"フェーズ集計データ取得エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"フェーズ集計データの取得に失敗しました: {str(e)}")
 
+
+@router.get("/contact-ids", summary="コンタクトIDリスト取得（月次）")
+async def get_contact_ids(
+    aggregation_date: str = Query(..., description="集計日 (YYYY-MM-DD形式)"),
+    owner_id: str = Query(..., description="担当者ID"),
+    phase_type: str = Query(..., description="フェーズ区分 (buy または sell)"),
+    phase_value: str = Query(..., description="フェーズ値 (S, A, B, C, D, Z)"),
+    service: ContactPhaseSummaryMonthlyService = Depends(get_contact_phase_summary_monthly_service),
+    api_key_info=Depends(verify_api_key)
+):
+    """指定した条件のコンタクトIDリストとHubSpotリンクを取得します（月次）"""
+    try:
+        try:
+            date_obj = date.fromisoformat(aggregation_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="無効な日付形式です。YYYY-MM-DD形式で指定してください。")
+        
+        if phase_type not in ['buy', 'sell']:
+            raise HTTPException(status_code=400, detail="phase_typeは 'buy' または 'sell' である必要があります。")
+        
+        if phase_value not in ['S', 'A', 'B', 'C', 'D', 'Z']:
+            raise HTTPException(status_code=400, detail="phase_valueは 'S', 'A', 'B', 'C', 'D', 'Z' のいずれかである必要があります。")
+        
+        return await service.get_contact_ids(date_obj, owner_id, phase_type, phase_value)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"コンタクトIDリスト取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"コンタクトIDリストの取得に失敗しました: {str(e)}")
+
