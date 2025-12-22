@@ -96,7 +96,10 @@ class ContactPhaseSummaryMonthlySync:
 
         try:
             logger.info("コンタクトフェーズ集計（月次）を開始します。")
-            await update_progress(None, "開始", 0)
+            try:
+                await update_progress(None, "開始", 0)
+            except Exception as e:
+                logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
             
             # 担当者キャッシュを事前に読み込む
             await self._load_owners_cache()
@@ -110,7 +113,10 @@ class ContactPhaseSummaryMonthlySync:
             # 対象担当者IDが取得できているか確認
             if not TARGET_OWNER_IDS:
                 logger.info("コンタクトフェーズ集計（月次）が完了しました: 更新件数=0件")
-                await update_progress(None, "完了: 更新件数=0件", 100)
+                try:
+                    await update_progress(None, "完了: 更新件数=0件", 100)
+                except Exception as e:
+                    logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 return
             
             # コンタクトデータを取得して集計
@@ -125,7 +131,10 @@ class ContactPhaseSummaryMonthlySync:
             
             if total_count == 0:
                 logger.info("コンタクトフェーズ集計（月次）が完了しました: 更新件数=0件")
-                await update_progress(None, "完了: 更新件数=0件", 100)
+                try:
+                    await update_progress(None, "完了: 更新件数=0件", 100)
+                except Exception as e:
+                    logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 return
             
             # データベースに保存
@@ -379,7 +388,10 @@ class ContactPhaseSummaryMonthlySync:
                     # 進捗を更新（100件ごと、または最後）
                     if total_contacts % 100 == 0 or (not response.get("paging", {}).get("next")):
                         percentage = int((processed_contacts / max(total_contacts, 1)) * 100) if total_contacts > 0 else 0
-                        await update_progress(None, f"処理中: {processed_contacts}件 (集計成功: {stats.get('successfully_aggregated', 0)}件)", percentage)
+                        try:
+                            await update_progress(None, f"処理中: {processed_contacts}件 (集計成功: {stats.get('successfully_aggregated', 0)}件)", percentage)
+                        except Exception as e:
+                            logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 
                 paging = response.get("paging", {})
                 next_after = paging.get("next", {}).get("after")
@@ -554,7 +566,10 @@ class ContactPhaseSummaryMonthlySync:
                                     insert_count += 1
                     
                     await conn.commit()
-                    await update_progress(None, f"完了: 保存件数={insert_count}件", 100)
+                    try:
+                        await update_progress(None, f"完了: 保存件数={insert_count}件", 100)
+                    except Exception as e:
+                        logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 except Exception as e:
                     logger.error(f"データベースへの保存中にエラーが発生しました: {str(e)}", exc_info=True)
                     await conn.rollback()

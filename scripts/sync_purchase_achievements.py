@@ -358,7 +358,10 @@ class PurchaseAchievementsSync:
             
             if not target_stage_ids:
                 logger.info("物件買取実績の同期が完了しました: 更新件数=0件")
-                await update_progress(None, "完了: 更新件数=0件", 100)
+                try:
+                    await update_progress(None, "完了: 更新件数=0件", 100)
+                except Exception as e:
+                    logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 return
             
             # 取引を取得
@@ -366,7 +369,10 @@ class PurchaseAchievementsSync:
             
             if not deals:
                 logger.info("物件買取実績の同期が完了しました: 更新件数=0件")
-                await update_progress(None, "完了: 更新件数=0件", 100)
+                try:
+                    await update_progress(None, "完了: 更新件数=0件", 100)
+                except Exception as e:
+                    logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 return
             
             # 各取引を処理
@@ -387,10 +393,16 @@ class PurchaseAchievementsSync:
                 # 進捗を更新（10件ごと、または最後）
                 if idx % 10 == 0 or idx == total_deals:
                     percentage = int((idx / total_deals) * 100)
-                    await update_progress(None, f"処理中: {idx}/{total_deals}件 (成功: {success_count}件, 失敗: {failure_count}件)", percentage)
+                    try:
+                        await update_progress(None, f"処理中: {idx}/{total_deals}件 (成功: {success_count}件, 失敗: {failure_count}件)", percentage)
+                    except Exception as e:
+                        logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
             
             logger.info(f"物件買取実績の同期が完了しました: 成功={success_count}件, 失敗={failure_count}件")
-            await update_progress(None, f"完了: 成功={success_count}件, 失敗={failure_count}件", 100)
+            try:
+                await update_progress(None, f"完了: 成功={success_count}件, 失敗={failure_count}件", 100)
+            except Exception as e:
+                logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
             
         except Exception as e:
             logger.error(f"物件買取実績の同期に失敗しました: {str(e)}")

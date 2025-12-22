@@ -88,7 +88,10 @@ class ContactSalesBadgeUpdater:
             return
 
         logger.info("販売パイプラインのコンタクトバッジ更新を開始します。")
-        await update_progress(None, "開始", 0)
+        try:
+            await update_progress(None, "開始", 0)
+        except Exception as e:
+            logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
         await self._load_stage_labels()
         await self._aggregate_contact_counts()
         await self._update_contacts()
@@ -148,14 +151,20 @@ class ContactSalesBadgeUpdater:
                 if self.total_deals_processed % 100 == 0 or (not next_after):
                     # 取引処理は全体の50%まで（取引処理完了時に50%に設定）
                     percentage = 50 if not next_after else min(45, int((self.total_deals_processed / 100) * 5))
-                    await update_progress(None, f"取引処理中: {self.total_deals_processed}件 (対象コンタクト: {len(self.contact_counters)}件)", percentage)
+                    try:
+                        await update_progress(None, f"取引処理中: {self.total_deals_processed}件 (対象コンタクト: {len(self.contact_counters)}件)", percentage)
+                    except Exception as e:
+                        logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                 
                 if next_after:
                     after = str(next_after)
                     page += 1
                 else:
                     # 取引処理完了時に50%に設定
-                    await update_progress(None, f"取引処理完了: {self.total_deals_processed}件 (対象コンタクト: {len(self.contact_counters)}件)", 50)
+                    try:
+                        await update_progress(None, f"取引処理完了: {self.total_deals_processed}件 (対象コンタクト: {len(self.contact_counters)}件)", 50)
+                    except Exception as e:
+                        logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
                     break
         except Exception as e:
             logger.error(f"取引取得中にエラーが発生しました: {str(e)}", exc_info=True)
@@ -228,7 +237,10 @@ class ContactSalesBadgeUpdater:
         """集計した結果をHubSpotコンタクトに反映"""
         if not self.contact_counters:
             logger.info("販売パイプラインのコンタクトバッジ更新が完了しました: 更新件数=0件")
-            await update_progress(None, "完了: 更新件数=0件", 100)
+            try:
+                await update_progress(None, "完了: 更新件数=0件", 100)
+            except Exception as e:
+                logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
             return
 
         updated = 0
@@ -260,10 +272,16 @@ class ContactSalesBadgeUpdater:
             # 進捗を更新（10件ごと、または最後）
             if idx % 10 == 0 or idx == total_contacts:
                 percentage = 50 + int((idx / total_contacts) * 50) if total_contacts > 0 else 50
-                await update_progress(None, f"コンタクト更新中: {idx}/{total_contacts}件 (成功: {updated}件)", percentage)
+                try:
+                    await update_progress(None, f"コンタクト更新中: {idx}/{total_contacts}件 (成功: {updated}件)", percentage)
+                except Exception as e:
+                    logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
 
         logger.info(f"販売パイプラインのコンタクトバッジ更新が完了しました: 更新件数={updated}件")
-        await update_progress(None, f"完了: 更新件数={updated}件", 100)
+        try:
+            await update_progress(None, f"完了: 更新件数={updated}件", 100)
+        except Exception as e:
+            logger.error(f"進捗更新中にエラーが発生しました: {str(e)}", exc_info=True)
 
 
 async def main():
