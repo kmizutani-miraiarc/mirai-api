@@ -47,6 +47,8 @@ async def update_progress(
     if job_id is None:
         # 環境変数から取得を試みる
         job_id_str = os.environ.get('BATCH_JOB_ID')
+        logger.info(f"環境変数BATCH_JOB_IDを確認: {job_id_str} (型: {type(job_id_str)})")
+        logger.info(f"すべての環境変数（BATCHで始まるもの）: {[k for k in os.environ.keys() if k.startswith('BATCH')]}")
         if job_id_str:
             try:
                 job_id = int(job_id_str)
@@ -57,7 +59,7 @@ async def update_progress(
         else:
             # 環境変数が設定されていない場合は警告を出さずに静かに終了
             # （手動実行時など、BATCH_JOB_IDが設定されていない場合があるため）
-            logger.info("BATCH_JOB_IDが設定されていません（手動実行の可能性）")
+            logger.warning(f"BATCH_JOB_IDが設定されていません（手動実行の可能性）。現在の環境変数: {dict(os.environ)}")
             return
     
     try:

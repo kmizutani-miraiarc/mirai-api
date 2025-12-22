@@ -73,6 +73,13 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 logger = logging.getLogger(__name__)
 
+# 環境変数の確認（デバッグ用）
+batch_job_id = os.environ.get('BATCH_JOB_ID')
+if batch_job_id:
+    logger.info(f"BATCH_JOB_ID環境変数が設定されています: {batch_job_id}")
+else:
+    logger.warning("BATCH_JOB_ID環境変数が設定されていません")
+
 # パイプラインID
 PURCHASE_PIPELINE_ID = "675713658"  # 仕入パイプライン
 SALES_PIPELINE_ID = "682910274"  # 販売パイプライン

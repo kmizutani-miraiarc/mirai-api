@@ -210,6 +210,7 @@ class BatchJobWorker:
             env = os.environ.copy()
             env['BATCH_JOB_ID'] = str(job_id)
             env['PYTHONUNBUFFERED'] = '1'  # Pythonの出力バッファリングを無効化
+            logger.info(f"環境変数を設定しました: BATCH_JOB_ID={env.get('BATCH_JOB_ID')}, PYTHONUNBUFFERED={env.get('PYTHONUNBUFFERED')}")
             
             # 出力を一時ファイルにリダイレクト（バッファ溢れを防ぐ）
             stdout_file = os.path.join(log_dir, f'batch_job_{job_id}_stdout.log')
