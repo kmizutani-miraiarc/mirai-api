@@ -172,16 +172,48 @@ class BatchJobQueue:
             async with db_connection.pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
                     await cursor.execute("""
-                        SELECT status FROM batch_job_queue
+                        SELECT status, stop_requested FROM batch_job_queue
                         WHERE id = %s
                     """, (job_id,))
                     
                     job = await cursor.fetchone()
-                    if job and job['status'] != 'running':
-                        return True
+                    if job:
+                        # stop_requestedフラグがTrueの場合、またはstatusがrunning以外の場合
+                        if job.get('stop_requested', False) or job.get('status') != 'running':
+                            return True
                     return False
         except Exception as e:
             logger.error(f"ジョブ停止チェックに失敗しました: {str(e)}", exc_info=True)
+            return False
+    
+    async def request_stop(self, job_id: int) -> bool:
+        """
+        ジョブの停止を要求
+        
+        Args:
+            job_id: ジョブID
+            
+        Returns:
+            成功時True、失敗時False
+        """
+        try:
+            await db_connection.create_pool()
+            if not db_connection.pool:
+                logger.error("データベース接続プールが作成されていません")
+                return False
+            
+            async with db_connection.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                        UPDATE batch_job_queue
+                        SET stop_requested = TRUE
+                        WHERE id = %s
+                    """, (job_id,))
+                    
+                    await conn.commit()
+                    return True
+        except Exception as e:
+            logger.error(f"ジョブ停止要求の設定に失敗しました: {str(e)}", exc_info=True)
             return False
     
     async def update_job_status(
