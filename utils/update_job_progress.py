@@ -19,6 +19,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from services.batch_job_queue import BatchJobQueue
 
 logger = logging.getLogger(__name__)
+# ログレベルをINFOに設定（デバッグ用）
+logger.setLevel(logging.INFO)
 
 
 async def update_progress(
@@ -40,15 +42,18 @@ async def update_progress(
         if job_id_str:
             try:
                 job_id = int(job_id_str)
+                logger.debug(f"環境変数からBATCH_JOB_IDを取得: {job_id}")
             except (ValueError, TypeError):
                 logger.warning(f"無効なBATCH_JOB_ID: {job_id_str}")
                 return
         else:
             # 環境変数が設定されていない場合は警告を出さずに静かに終了
             # （手動実行時など、BATCH_JOB_IDが設定されていない場合があるため）
+            logger.debug("BATCH_JOB_IDが設定されていません（手動実行の可能性）")
             return
     
     try:
+        logger.debug(f"進捗更新を開始: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
         queue = BatchJobQueue()
         success = await queue.update_job_progress(job_id, progress_message, progress_percentage)
         if success:

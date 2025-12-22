@@ -284,6 +284,7 @@ class BatchJobQueue:
             成功時True、失敗時False
         """
         try:
+            logger.debug(f"進捗更新開始: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
             await db_connection.create_pool()
             if not db_connection.pool:
                 logger.error("データベース接続プールが作成されていません")
@@ -295,16 +296,21 @@ class BatchJobQueue:
                     if progress_percentage is not None:
                         progress_percentage = max(0, min(100, progress_percentage))
                     
+                    logger.debug(f"進捗更新SQL実行: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
                     await cursor.execute("""
                         UPDATE batch_job_queue
                         SET progress_message = %s, progress_percentage = %s
                         WHERE id = %s
                     """, (progress_message, progress_percentage, job_id))
                     
+                    rows_affected = cursor.rowcount
+                    logger.debug(f"進捗更新SQL実行完了: job_id={job_id}, rows_affected={rows_affected}")
+                    
                     await conn.commit()
+                    logger.info(f"進捗更新成功: job_id={job_id}, progress={progress_percentage}%, message={progress_message}")
                     return True
         except Exception as e:
-            logger.error(f"ジョブ進捗の更新に失敗しました: {str(e)}", exc_info=True)
+            logger.error(f"ジョブ進捗の更新に失敗しました: job_id={job_id}, error={str(e)}", exc_info=True)
             return False
     
     async def increment_retry_count(self, job_id: int) -> bool:

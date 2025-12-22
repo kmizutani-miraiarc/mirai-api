@@ -107,6 +107,8 @@ class BatchJobWorker:
             
             if result['success']:
                 logger.info(f"ジョブが正常に完了しました: {job_name} (ID: {job_id})")
+                # 進捗を100%に更新してからステータスを完了に更新
+                await self.queue.update_job_progress(job_id, "完了", 100)
                 await self.queue.update_job_status(job_id, 'completed')
             else:
                 error_msg = result.get('error', 'Unknown error')
