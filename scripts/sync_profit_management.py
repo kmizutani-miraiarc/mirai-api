@@ -26,6 +26,7 @@ from services.property_owner_service import PropertyOwnerService
 from models.profit_management import ProfitManagementCreate, ProfitManagementUpdate
 from models.property_owner import PropertyOwnerCreate, PropertyOwnerUpdate, OwnerType
 from hubspot.config import Config
+from utils.update_job_progress import update_progress
 
 # ログ設定
 # Docker環境では /app/logs、本番環境では /var/www/mirai-api/logs
@@ -93,8 +94,6 @@ class ProfitManagementSync:
             all_deals = []
             after = None
             
-            logger.info("販売パイプラインの取引を取得中...")
-            
             # まず、販売パイプラインのすべての取引を取得
             while True:
                 search_criteria = {
@@ -140,8 +139,6 @@ class ProfitManagementSync:
                     break
                 after = paging["next"].get("after")
             
-            logger.info(f"販売パイプラインの取引を {len(all_deals)} 件取得しました")
-            
             # settlement_dateまたはcontract_dateが設定されている取引のみをフィルタリング
             filtered_deals = []
             for deal in all_deals:
@@ -151,11 +148,9 @@ class ProfitManagementSync:
                 if (settlement_date and settlement_date.strip()) or (contract_date and contract_date.strip()):
                     filtered_deals.append(deal)
             
-            logger.info(f"決済日または契約日が設定されている取引を {len(filtered_deals)} 件抽出しました")
             return filtered_deals
             
         except Exception as e:
-            logger.error(f"販売取引の取得に失敗しました: {str(e)}")
             raise
     
     async def get_bukken_from_deal(self, deal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -163,20 +158,17 @@ class ProfitManagementSync:
         try:
             deal_id = deal.get("id")
             if not deal_id:
-                logger.warning("取引IDが取得できませんでした")
                 return None
             
             # 取引の関連情報を取得（既存の実装パターンに合わせる）
             deal_with_associations = await self.deals_client.get_deal_by_id_with_associations(deal_id)
             if not deal_with_associations:
-                logger.warning(f"取引 {deal_id} の関連情報を取得できませんでした")
                 return None
             
             associations = deal_with_associations.get("associations", {})
             bukken_list = associations.get("2-39155607", [])  # 物件オブジェクトタイプID
             
             if not bukken_list:
-                logger.warning(f"取引 {deal_id} に関連する物件が見つかりませんでした")
                 return None
             
             # 最初の物件を取得
@@ -184,21 +176,17 @@ class ProfitManagementSync:
             bukken_id = bukken.get("id")
             
             if not bukken_id:
-                logger.warning(f"取引 {deal_id} に関連する物件のIDが取得できませんでした")
                 return None
             
             # 物件の詳細情報を取得
             bukken_detail = await self.bukken_client.get_bukken_by_id(bukken_id)
             
             if not bukken_detail:
-                logger.warning(f"物件 {bukken_id} の詳細情報を取得できませんでした")
                 return None
             
-            logger.info(f"物件 {bukken_id} の詳細情報を取得しました: {bukken_detail.get('properties', {}).get('bukken_name', 'Unknown')}")
             return bukken_detail
             
         except Exception as e:
-            logger.error(f"物件情報の取得に失敗しました: {str(e)}", exc_info=True)
             return None
     
     async def get_deals_by_bukken_and_pipeline(self, bukken_id: str, pipeline_id: str) -> List[Dict[str, Any]]:
@@ -218,7 +206,6 @@ class ProfitManagementSync:
             return filtered_deals
             
         except Exception as e:
-            logger.error(f"物件 {bukken_id} の取引取得に失敗しました: {str(e)}")
             return []
     
     def parse_date(self, date_str: Optional[str]) -> Optional[date]:
@@ -238,7 +225,6 @@ class ProfitManagementSync:
                 dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 return dt.date()
         except Exception as e:
-            logger.warning(f"日付のパースに失敗しました: {date_str}, エラー: {str(e)}")
             return None
     
     def parse_decimal(self, value: Optional[Any]) -> Optional[Decimal]:
@@ -252,7 +238,6 @@ class ProfitManagementSync:
                 value = value.replace(",", "")
             return Decimal(str(value))
         except Exception as e:
-            logger.warning(f"数値のパースに失敗しました: {value}, エラー: {str(e)}")
             return None
     
     async def get_owner_name(self, owner_id: Optional[str]) -> str:
@@ -281,7 +266,7 @@ class ProfitManagementSync:
                 self.owners_cache[owner_id] = owner_name
                 return owner_name
         except Exception as e:
-            logger.warning(f"担当者 {owner_id} の名前取得に失敗しました: {str(e)}")
+            pass
         
         # 取得に失敗した場合は空文字列を返す
         self.owners_cache[owner_id] = ""
@@ -295,7 +280,6 @@ class ProfitManagementSync:
             # 物件情報を取得
             bukken = await self.get_bukken_from_deal(sales_deal)
             if not bukken:
-                logger.warning(f"取引 {deal_id} に関連する物件情報が見つかりませんでした")
                 return False
             
             bukken_id = bukken.get("id")
@@ -303,7 +287,6 @@ class ProfitManagementSync:
             bukken_name = bukken_properties.get("bukken_name", "")
             
             if not bukken_id:
-                logger.warning(f"物件IDが取得できませんでした")
                 return False
             
             # 販売取引の情報を取得
@@ -346,14 +329,11 @@ class ProfitManagementSync:
                 purchase_owner_id = purchase_properties.get("hubspot_owner_id")
             
             # 既存の粗利按分管理データを確認（物件番号で重複チェック）
-            logger.debug(f"物件 {bukken_id} ({bukken_name}) の既存データを確認中...")
             existing = await self.profit_service.get_profit_management_by_property_id(bukken_id)
-            logger.debug(f"物件 {bukken_id} ({bukken_name}) の既存データ確認完了: existing={existing is not None}")
             
             if existing:
                 # 粗利確定フラグがONの場合は更新しない
                 if existing.profit_confirmed:
-                    logger.info(f"物件 {bukken_id} は粗利確定済みのため、更新をスキップします")
                     return True
                 
                 # 更新（編集可能項目は上書きしない）
@@ -377,18 +357,13 @@ class ProfitManagementSync:
                     accounting_year_month=accounting_year_month
                 )
                 
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の更新処理を開始します (seq_no: {existing.seq_no})")
                 updated = await self.profit_service.update_profit_management(existing.seq_no, update_data)
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の更新処理が完了しました: updated={updated}")
                 if not updated:
-                    logger.error(f"物件 {bukken_id} の更新に失敗しました")
                     return False
                 
                 seq_no = existing.seq_no
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の更新が成功しました (seq_no: {seq_no})")
             else:
                 # 新規作成
-                logger.info(f"物件 {bukken_id} の粗利按分管理データを作成します")
                 create_data = ProfitManagementCreate(
                     property_id=bukken_id,
                     property_name=bukken_name,
@@ -402,45 +377,21 @@ class ProfitManagementSync:
                     accounting_year_month=accounting_year_month
                 )
                 
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の作成処理を開始します")
-                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成処理を開始します（データベース接続前）")
-                # デバッグ: プロセスのリソース使用状況を確認
-                try:
-                    import psutil
-                    import os
-                    process = psutil.Process(os.getpid())
-                    mem_info = process.memory_info()
-                    logger.info(f"メモリ使用量: RSS={mem_info.rss / 1024 / 1024:.2f}MB, VMS={mem_info.vms / 1024 / 1024:.2f}MB")
-                    fd_count = len(os.listdir(f'/proc/{os.getpid()}/fd'))
-                    logger.info(f"ファイルディスクリプタ数: {fd_count}")
-                except Exception:
-                    pass
-                
                 created = await self.profit_service.create_profit_management(create_data)
-                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成処理が完了しました: created={created is not None}")
                 if not created:
-                    logger.error(f"物件 {bukken_id} の作成に失敗しました")
                     return False
                 
                 seq_no = created.seq_no
-                logger.info(f"物件 {bukken_id} ({bukken_name}) の作成が成功しました (seq_no: {seq_no})")
             
             # 物件担当者情報を保存（既存の場合は更新しない）
             # 既存データがある場合は、担当者情報は更新しない
             if not existing:
-                logger.debug(f"物件 {bukken_id} ({bukken_name}) の担当者情報保存処理を開始します (seq_no: {seq_no})")
                 try:
                     # 仕入担当者を保存
                     if purchase_owner_id:
                         try:
-                            logger.debug(f"物件 {bukken_id} ({bukken_name}) の仕入担当者 {purchase_owner_id} の処理を開始します")
-                            # 担当者名を取得
-                            logger.debug(f"物件 {bukken_id} ({bukken_name}) の仕入担当者名を取得中...")
                             purchase_owner_name = await self.get_owner_name(purchase_owner_id)
-                            logger.debug(f"物件 {bukken_id} ({bukken_name}) の仕入担当者名取得完了: {purchase_owner_name}")
                             
-                            # 新規作成のみ
-                            logger.debug(f"物件 {bukken_id} ({bukken_name}) の仕入担当者を新規作成します")
                             purchase_owner = PropertyOwnerCreate(
                                 property_id=bukken_id,
                                 profit_management_seq_no=seq_no,
@@ -453,17 +404,14 @@ class ProfitManagementSync:
                                 profit_amount=None  # 空欄
                             )
                             await self.owner_service.create_property_owner(purchase_owner)
-                            logger.debug(f"物件 {bukken_id} ({bukken_name}) の仕入担当者作成完了: {purchase_owner_id} ({purchase_owner_name})")
-                        except Exception as e:
-                            logger.warning(f"仕入担当者の保存に失敗しました: {str(e)}", exc_info=True)
+                        except Exception:
+                            pass
                     
                     # 販売担当者を保存
                     if sales_owner_id:
                         try:
-                            # 担当者名を取得
                             sales_owner_name = await self.get_owner_name(sales_owner_id)
                             
-                            # 新規作成のみ
                             sales_owner = PropertyOwnerCreate(
                                 property_id=bukken_id,
                                 profit_management_seq_no=seq_no,
@@ -476,24 +424,18 @@ class ProfitManagementSync:
                                 profit_amount=None  # 空欄
                             )
                             await self.owner_service.create_property_owner(sales_owner)
-                            logger.info(f"販売担当者 {sales_owner_id} ({sales_owner_name}) を作成しました")
-                        except Exception as e:
-                            logger.warning(f"販売担当者の保存に失敗しました: {str(e)}", exc_info=True)
-                except Exception as e:
-                    logger.error(f"物件担当者情報の保存に失敗しました: {str(e)}", exc_info=True)
+                        except Exception:
+                            pass
+                except Exception:
                     # 担当者情報の保存に失敗しても、メインデータは保存されているので続行
+                    pass
             else:
                 # 既存データのため、担当者情報は更新しない
                 pass
             
-            logger.info(f"取引 {deal_id} の処理が完了しました (物件: {bukken_id}, {bukken_name})")
             return True
             
         except Exception as e:
-            deal_id = sales_deal.get('id', 'Unknown')
-            logger.error(f"取引 {deal_id} の処理に失敗しました: {str(e)}")
-            import traceback
-            logger.error(f"取引 {deal_id} のエラー詳細:\n{traceback.format_exc()}")
             return False
     
     async def sync(self):
@@ -506,9 +448,8 @@ class ProfitManagementSync:
             if not db_connection.pool:
                 await db_connection.create_pool()
                 pool_created_by_this_call = True
-                logger.info("新しいデータベース接続プールを作成しました")
             else:
-                logger.info("既存のデータベース接続プールを使用します")
+                pass
             
             # サービスを初期化
             self.profit_service = ProfitManagementService(db_connection.pool)
@@ -518,15 +459,14 @@ class ProfitManagementSync:
             sales_deals = await self.get_sales_deals_with_settlement_or_contract_date()
             
             if not sales_deals:
-                logger.info("対象取引が見つかりませんでした")
+                logger.info("粗利按分管理データの同期が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # 各取引を処理
             success_count = 0
             failure_count = 0
             total_deals = len(sales_deals)
-            
-            logger.info(f"処理対象の取引数: {total_deals}件")
             
             for idx, deal in enumerate(sales_deals, 1):
                 deal_id = deal.get("id", "Unknown")
@@ -535,23 +475,25 @@ class ProfitManagementSync:
                         success_count += 1
                     else:
                         failure_count += 1
-                        logger.warning(f"Batch {idx}/{total_deals} failed")
                 except Exception as e:
-                    logger.error(f"取引処理中にエラーが発生しました (Batch {idx}/{total_deals}): {str(e)}", exc_info=True)
                     failure_count += 1
+                
+                # 進捗を更新（10件ごと、または最後）
+                if idx % 10 == 0 or idx == total_deals:
+                    percentage = int((idx / total_deals) * 100)
+                    await update_progress(None, f"処理中: {idx}/{total_deals}件 (成功: {success_count}件, 失敗: {failure_count}件)", percentage)
             
             logger.info(f"粗利按分管理データの同期が完了しました: 成功={success_count}件, 失敗={failure_count}件")
+            await update_progress(None, f"完了: 成功={success_count}件, 失敗={failure_count}件", 100)
             
         except Exception as e:
-            logger.error(f"粗利按分管理データの同期に失敗しました: {str(e)}")
             raise
         finally:
             # データベース接続を閉じる（この呼び出しで作成した場合のみ）
             if pool_created_by_this_call and db_connection.pool:
                 await db_connection.close_pool()
-                logger.info("この呼び出しで作成したデータベース接続プールを閉じました")
             else:
-                logger.info("既存のデータベース接続プールは保持します（APIサーバーで使用中）")
+                pass
 
 async def main():
     """メイン関数"""
@@ -564,8 +506,6 @@ async def main():
         # 同期処理を実行
         sync = ProfitManagementSync()
         await sync.sync()
-        
-        logger.info("バッチ処理が正常に完了しました")
         
     except Exception as e:
         logger.error(f"バッチ処理中にエラーが発生しました: {str(e)}")

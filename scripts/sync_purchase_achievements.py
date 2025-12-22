@@ -21,6 +21,7 @@ from hubspot.bukken import HubSpotBukkenClient
 from services.purchase_achievement_service import PurchaseAchievementService
 from models.purchase_achievement import PurchaseAchievementCreate, PurchaseAchievementUpdate
 from hubspot.config import Config
+from utils.update_job_progress import update_progress
 
 # ログ設定
 log_dir = '/var/www/mirai-api/logs'
@@ -60,7 +61,6 @@ class PurchaseAchievementsSync:
         """「決済」と「契約」ステージのIDを取得"""
         try:
             stages = await self.deals_client.get_pipeline_stages(PURCHASE_PIPELINE_ID)
-            logger.info(f"パイプライン {PURCHASE_PIPELINE_ID} のステージを取得: {len(stages)}件")
             
             settlement_ids = []
             contract_ids = []
@@ -72,17 +72,14 @@ class PurchaseAchievementsSync:
                 # 「決済」または「settlement」を含むステージ
                 if "決済" in stage_label or "settlement" in stage_label:
                     settlement_ids.append(stage_id)
-                    logger.info(f"決済ステージを検出: {stage.get('label')} (ID: {stage_id})")
                 
                 # 「契約」または「contract」を含むステージ
                 if "契約" in stage_label or "contract" in stage_label:
                     contract_ids.append(stage_id)
-                    logger.info(f"契約ステージを検出: {stage.get('label')} (ID: {stage_id})")
             
             return settlement_ids, contract_ids
             
         except Exception as e:
-            logger.error(f"ステージIDの取得に失敗しました: {str(e)}")
             raise
     
     async def get_deals_by_stages(self, stage_ids: List[str]) -> List[Dict[str, Any]]:
@@ -91,8 +88,6 @@ class PurchaseAchievementsSync:
             all_deals = []
             
             for stage_id in stage_ids:
-                logger.info(f"ステージ {stage_id} の取引を取得中...")
-                
                 search_criteria = {
                     "filterGroups": [{
                         "filters": [
@@ -134,18 +129,15 @@ class PurchaseAchievementsSync:
                         break
                     
                     all_deals.extend(deals)
-                    logger.info(f"ステージ {stage_id} で {len(deals)} 件の取引を取得（合計: {len(all_deals)} 件）")
                     
                     paging = result.get("paging", {})
                     if not paging.get("next"):
                         break
                     after = paging["next"].get("after")
             
-            logger.info(f"全取引数: {len(all_deals)} 件")
             return all_deals
             
         except Exception as e:
-            logger.error(f"取引の取得に失敗しました: {str(e)}")
             raise
     
     async def get_bukken_from_deal(self, deal_id: str) -> Optional[Dict[str, Any]]:
@@ -154,14 +146,12 @@ class PurchaseAchievementsSync:
             # 取引の関連情報を取得
             deal_with_associations = await self.deals_client.get_deal_by_id_with_associations(deal_id)
             if not deal_with_associations:
-                logger.warning(f"取引 {deal_id} の関連情報を取得できませんでした")
                 return None
             
             associations = deal_with_associations.get("associations", {})
             bukken_list = associations.get("2-39155607", [])  # 物件オブジェクトタイプID
             
             if not bukken_list:
-                logger.warning(f"取引 {deal_id} に関連する物件が見つかりませんでした")
                 return None
             
             # 最初の物件を取得
@@ -169,23 +159,17 @@ class PurchaseAchievementsSync:
             bukken_id = bukken.get("id")
             
             if not bukken_id:
-                logger.warning(f"取引 {deal_id} に関連する物件のIDが取得できませんでした")
                 return None
-            
-            logger.info(f"取引 {deal_id} に関連する物件 {bukken_id} を取得中...")
             
             # 物件の詳細情報を取得
             bukken_detail = await self.bukken_client.get_bukken_by_id(bukken_id)
             
             if not bukken_detail:
-                logger.warning(f"物件 {bukken_id} の詳細情報を取得できませんでした")
                 return None
             
-            logger.info(f"物件 {bukken_id} の詳細情報を取得しました: {bukken_detail.get('properties', {}).get('bukken_name', 'Unknown')}")
             return bukken_detail
             
         except Exception as e:
-            logger.error(f"取引 {deal_id} の物件情報取得に失敗しました: {str(e)}", exc_info=True)
             return None
     
     def extract_purchase_date(self, deal: Dict[str, Any]) -> Optional[date]:
@@ -233,7 +217,6 @@ class PurchaseAchievementsSync:
             return None
             
         except Exception as e:
-            logger.error(f"買取日の抽出に失敗しました: {str(e)}")
             return None
     
     def create_title(self, bukken: Dict[str, Any]) -> str:
@@ -256,7 +239,6 @@ class PurchaseAchievementsSync:
                 return "物件情報"
                 
         except Exception as e:
-            logger.error(f"タイトルの生成に失敗しました: {str(e)}")
             return "物件情報"
     
     async def process_deal(self, deal: Dict[str, Any]) -> bool:
@@ -265,12 +247,9 @@ class PurchaseAchievementsSync:
             deal_id = deal.get("id")
             deal_properties = deal.get("properties", {})
             
-            logger.info(f"取引 {deal_id} を処理中: {deal_properties.get('dealname', 'Unknown')}")
-            
             # 物件情報を取得
             bukken = await self.get_bukken_from_deal(deal_id)
             if not bukken:
-                logger.warning(f"取引 {deal_id} に関連する物件が見つかりませんでした")
                 return False
             
             bukken_id = bukken.get("id")
@@ -281,7 +260,7 @@ class PurchaseAchievementsSync:
             
             if existing:
                 # 既存の物件がある場合は、HubSpotから取得できる項目のみを更新
-                logger.info(f"物件 {bukken_id} は既に取り込み済みです（ID: {existing.get('id')}）。更新処理を実行します。")
+                # 既に取り込み済みのため更新処理を実行
                 
                 # 築年数の処理
                 building_age = None
@@ -305,10 +284,8 @@ class PurchaseAchievementsSync:
                 # 更新処理を実行
                 success = await self.achievement_service.update(existing.get("id"), update_data)
                 if success:
-                    logger.info(f"物件 {bukken_id} の更新が完了しました（ID: {existing.get('id')}）")
                     return True
                 else:
-                    logger.error(f"物件 {bukken_id} の更新に失敗しました（ID: {existing.get('id')}）")
                     return False
             
             # 買取日を取得
@@ -353,12 +330,10 @@ class PurchaseAchievementsSync:
             
             # データベースに保存（upsert）
             achievement_id = await self.achievement_service.upsert(achievement)
-            logger.info(f"物件買取実績を保存しました: id={achievement_id}, bukken_id={bukken_id}, deal_id={deal_id}")
             
             return True
             
         except Exception as e:
-            logger.error(f"取引 {deal.get('id')} の処理に失敗しました: {str(e)}")
             return False
     
     async def sync(self):
@@ -371,40 +346,47 @@ class PurchaseAchievementsSync:
             if not db_connection.pool:
                 await db_connection.create_pool()
                 pool_created_by_this_call = True
-                logger.info("新しいデータベース接続プールを作成しました")
             else:
-                logger.info("既存のデータベース接続プールを使用します")
+                pass
             
             # ステージIDを取得
             settlement_ids, contract_ids = await self.get_target_stage_ids()
             target_stage_ids = settlement_ids + contract_ids
             
             if not target_stage_ids:
-                logger.warning("対象ステージが見つかりませんでした")
+                logger.info("物件買取実績の同期が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # 取引を取得
             deals = await self.get_deals_by_stages(target_stage_ids)
             
             if not deals:
-                logger.info("対象取引が見つかりませんでした")
+                logger.info("物件買取実績の同期が完了しました: 更新件数=0件")
+                await update_progress(None, "完了: 更新件数=0件", 100)
                 return
             
             # 各取引を処理
             success_count = 0
             failure_count = 0
+            total_deals = len(deals)
             
-            for deal in deals:
+            for idx, deal in enumerate(deals, 1):
                 try:
                     if await self.process_deal(deal):
                         success_count += 1
                     else:
                         failure_count += 1
                 except Exception as e:
-                    logger.error(f"取引処理中にエラーが発生しました: {str(e)}")
                     failure_count += 1
+                
+                # 進捗を更新（10件ごと、または最後）
+                if idx % 10 == 0 or idx == total_deals:
+                    percentage = int((idx / total_deals) * 100)
+                    await update_progress(None, f"処理中: {idx}/{total_deals}件 (成功: {success_count}件, 失敗: {failure_count}件)", percentage)
             
             logger.info(f"物件買取実績の同期が完了しました: 成功={success_count}件, 失敗={failure_count}件")
+            await update_progress(None, f"完了: 成功={success_count}件, 失敗={failure_count}件", 100)
             
         except Exception as e:
             logger.error(f"物件買取実績の同期に失敗しました: {str(e)}")
@@ -414,9 +396,8 @@ class PurchaseAchievementsSync:
             # APIエンドポイントから呼び出された場合は、既存の接続プールを閉じない
             if pool_created_by_this_call and db_connection.pool:
                 await db_connection.close_pool()
-                logger.info("この呼び出しで作成したデータベース接続プールを閉じました")
             else:
-                logger.info("既存のデータベース接続プールは保持します（APIサーバーで使用中）")
+                pass
 
 async def main():
     """メイン関数"""
@@ -429,8 +410,6 @@ async def main():
         # 同期処理を実行
         sync = PurchaseAchievementsSync()
         await sync.sync()
-        
-        logger.info("バッチ処理が正常に完了しました")
         
     except Exception as e:
         logger.error(f"バッチ処理中にエラーが発生しました: {str(e)}")
