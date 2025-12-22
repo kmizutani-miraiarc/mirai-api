@@ -65,7 +65,7 @@ TARGET_OWNER_IDS: List[str] = []
 SPECIFIED_INDUSTRIES = ['売買仲介（エンド）', '買取']
 SPECIFIED_PROPERTY_TYPES = ['1棟AP', '1棟MS']
 SPECIFIED_AREAS = ['東京', '神奈川', '千葉', '埼玉']
-SPECIFIED_AREA_CATEGORIES = ['狭域の郊外(地元特化)', '1都3県（郊外寄り）', '1都3県（23区寄り）']
+SPECIFIED_AREA_CATEGORIES = ['狭域の郊外（地元特化）', '1都3県（郊外寄り）', '1都3県（23区寄り）']
 SPECIFIED_GROSSES = ['〜1億', '1〜3億']
 
 
