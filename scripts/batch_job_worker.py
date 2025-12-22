@@ -227,10 +227,12 @@ class BatchJobWorker:
             
             try:
                 # 環境変数を明示的に渡す（envパラメータを使用）
+                # また、コマンドライン引数としてもBATCH_JOB_IDを渡す（フォールバック用）
                 process = await asyncio.create_subprocess_exec(
                     self.python_path,
                     '-u',  # バッファリングを無効化
                     script_path,
+                    '--batch-job-id', str(job_id),  # コマンドライン引数としても渡す
                     stdout=stdout_fd,
                     stderr=stderr_fd,
                     cwd=working_dir,

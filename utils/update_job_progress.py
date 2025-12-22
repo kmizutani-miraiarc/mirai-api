@@ -7,6 +7,7 @@ import os
 import sys
 import asyncio
 import logging
+import argparse
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +31,28 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+# グローバル変数: コマンドライン引数から取得したBATCH_JOB_ID
+_BATCH_JOB_ID_FROM_ARGS = None
+
+def _parse_batch_job_id_from_args():
+    """コマンドライン引数からBATCH_JOB_IDを取得（一度だけパース）"""
+    global _BATCH_JOB_ID_FROM_ARGS
+    if _BATCH_JOB_ID_FROM_ARGS is not None:
+        return _BATCH_JOB_ID_FROM_ARGS
+    
+    try:
+        parser = argparse.ArgumentParser(add_help=False)  # add_help=Falseで既存の引数パーサーと競合しないようにする
+        parser.add_argument('--batch-job-id', type=int, help='Batch job ID')
+        args, _ = parser.parse_known_args()
+        if args.batch_job_id:
+            _BATCH_JOB_ID_FROM_ARGS = args.batch_job_id
+            logger.info(f"コマンドライン引数からBATCH_JOB_IDを取得: {_BATCH_JOB_ID_FROM_ARGS}")
+            return _BATCH_JOB_ID_FROM_ARGS
+    except Exception as e:
+        logger.debug(f"コマンドライン引数のパース中にエラーが発生しました: {str(e)}")
+    
+    return None
+
 
 async def update_progress(
     job_id: Optional[int],
@@ -45,21 +68,27 @@ async def update_progress(
         progress_percentage: 進捗パーセンテージ（0-100）
     """
     if job_id is None:
-        # 環境変数から取得を試みる
-        job_id_str = os.environ.get('BATCH_JOB_ID')
-        logger.info(f"環境変数BATCH_JOB_IDを確認: {job_id_str} (型: {type(job_id_str)})")
-        logger.info(f"すべての環境変数（BATCHで始まるもの）: {[k for k in os.environ.keys() if k.startswith('BATCH')]}")
-        if job_id_str:
-            try:
-                job_id = int(job_id_str)
-                logger.info(f"環境変数からBATCH_JOB_IDを取得: {job_id}")
-            except (ValueError, TypeError):
-                logger.warning(f"無効なBATCH_JOB_ID: {job_id_str}")
-                return
-        else:
-            # 環境変数が設定されていない場合は警告を出さずに静かに終了
-            # （手動実行時など、BATCH_JOB_IDが設定されていない場合があるため）
-            logger.warning(f"BATCH_JOB_IDが設定されていません（手動実行の可能性）。現在の環境変数: {dict(os.environ)}")
+        # 1. コマンドライン引数から取得を試みる
+        job_id = _parse_batch_job_id_from_args()
+        if job_id:
+            logger.info(f"コマンドライン引数からBATCH_JOB_IDを取得: {job_id}")
+        
+        # 2. 環境変数から取得を試みる（コマンドライン引数で取得できなかった場合）
+        if job_id is None:
+            job_id_str = os.environ.get('BATCH_JOB_ID')
+            logger.info(f"環境変数BATCH_JOB_IDを確認: {job_id_str} (型: {type(job_id_str)})")
+            if job_id_str:
+                try:
+                    job_id = int(job_id_str)
+                    logger.info(f"環境変数からBATCH_JOB_IDを取得: {job_id}")
+                except (ValueError, TypeError):
+                    logger.warning(f"無効なBATCH_JOB_ID: {job_id_str}")
+                    return
+        
+        # 3. どちらも取得できなかった場合
+        if job_id is None:
+            # 手動実行時など、BATCH_JOB_IDが設定されていない場合があるため、警告のみ
+            logger.debug("BATCH_JOB_IDが設定されていません（手動実行の可能性）")
             return
     
     try:
