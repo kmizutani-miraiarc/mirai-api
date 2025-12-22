@@ -38,18 +38,25 @@ def _parse_batch_job_id_from_args():
     """コマンドライン引数からBATCH_JOB_IDを取得（一度だけパース）"""
     global _BATCH_JOB_ID_FROM_ARGS
     if _BATCH_JOB_ID_FROM_ARGS is not None:
+        logger.info(f"キャッシュからBATCH_JOB_IDを取得: {_BATCH_JOB_ID_FROM_ARGS}")
         return _BATCH_JOB_ID_FROM_ARGS
+    
+    logger.info(f"コマンドライン引数をパース開始: sys.argv={sys.argv}")
     
     try:
         parser = argparse.ArgumentParser(add_help=False)  # add_help=Falseで既存の引数パーサーと競合しないようにする
         parser.add_argument('--batch-job-id', type=int, help='Batch job ID')
-        args, _ = parser.parse_known_args()
+        args, unknown = parser.parse_known_args()
+        logger.info(f"パース結果: batch_job_id={args.batch_job_id}, unknown={unknown}")
+        
         if args.batch_job_id:
             _BATCH_JOB_ID_FROM_ARGS = args.batch_job_id
             logger.info(f"コマンドライン引数からBATCH_JOB_IDを取得: {_BATCH_JOB_ID_FROM_ARGS}")
             return _BATCH_JOB_ID_FROM_ARGS
+        else:
+            logger.info("コマンドライン引数に--batch-job-idが含まれていません")
     except Exception as e:
-        logger.debug(f"コマンドライン引数のパース中にエラーが発生しました: {str(e)}")
+        logger.error(f"コマンドライン引数のパース中にエラーが発生しました: {str(e)}", exc_info=True)
     
     return None
 
@@ -69,18 +76,22 @@ async def update_progress(
     """
     if job_id is None:
         # 1. コマンドライン引数から取得を試みる
+        logger.info("コマンドライン引数からBATCH_JOB_IDを取得を試みます")
         job_id = _parse_batch_job_id_from_args()
         if job_id:
-            logger.info(f"コマンドライン引数からBATCH_JOB_IDを取得: {job_id}")
+            logger.info(f"コマンドライン引数からBATCH_JOB_IDを取得しました: {job_id}")
+        else:
+            logger.info("コマンドライン引数からBATCH_JOB_IDを取得できませんでした")
         
         # 2. 環境変数から取得を試みる（コマンドライン引数で取得できなかった場合）
         if job_id is None:
+            logger.info("環境変数からBATCH_JOB_IDを取得を試みます")
             job_id_str = os.environ.get('BATCH_JOB_ID')
             logger.info(f"環境変数BATCH_JOB_IDを確認: {job_id_str} (型: {type(job_id_str)})")
             if job_id_str:
                 try:
                     job_id = int(job_id_str)
-                    logger.info(f"環境変数からBATCH_JOB_IDを取得: {job_id}")
+                    logger.info(f"環境変数からBATCH_JOB_IDを取得しました: {job_id}")
                 except (ValueError, TypeError):
                     logger.warning(f"無効なBATCH_JOB_ID: {job_id_str}")
                     return
@@ -88,7 +99,7 @@ async def update_progress(
         # 3. どちらも取得できなかった場合
         if job_id is None:
             # 手動実行時など、BATCH_JOB_IDが設定されていない場合があるため、警告のみ
-            logger.debug("BATCH_JOB_IDが設定されていません（手動実行の可能性）")
+            logger.warning("BATCH_JOB_IDが設定されていません（手動実行の可能性）。進捗更新をスキップします。")
             return
     
     try:
