@@ -207,10 +207,15 @@ class BatchJobWorker:
                 working_dir = str(PROJECT_ROOT)
             
             # 非同期でスクリプトを実行（環境変数にジョブIDを設定、バッファリングを無効化）
-            env = os.environ.copy()
+            # 環境変数を明示的にコピーして設定（システムの環境変数も含める）
+            env = dict(os.environ)  # os.environ.copy()の代わりにdict()を使用
             env['BATCH_JOB_ID'] = str(job_id)
             env['PYTHONUNBUFFERED'] = '1'  # Pythonの出力バッファリングを無効化
+            
+            # デバッグ: 環境変数が正しく設定されているか確認
             logger.info(f"環境変数を設定しました: BATCH_JOB_ID={env.get('BATCH_JOB_ID')}, PYTHONUNBUFFERED={env.get('PYTHONUNBUFFERED')}")
+            logger.info(f"環境変数辞書にBATCH_JOB_IDが含まれているか確認: {'BATCH_JOB_ID' in env}")
+            logger.info(f"環境変数辞書のキー数: {len(env)}")
             
             # 出力を一時ファイルにリダイレクト（バッファ溢れを防ぐ）
             stdout_file = os.path.join(log_dir, f'batch_job_{job_id}_stdout.log')
@@ -220,20 +225,32 @@ class BatchJobWorker:
             stdout_fd = os.open(stdout_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
             stderr_fd = os.open(stderr_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
             
-            process = await asyncio.create_subprocess_exec(
-                self.python_path,
-                '-u',  # バッファリングを無効化
-                script_path,
-                stdout=stdout_fd,
-                stderr=stderr_fd,
-                cwd=working_dir,
-                env=env,
-                pass_fds=[]  # ファイルディスクリプタを継承
-            )
-            
-            # ファイルディスクリプタを閉じる（プロセスが継承するため）
-            os.close(stdout_fd)
-            os.close(stderr_fd)
+            try:
+                # 環境変数を明示的に渡す（envパラメータを使用）
+                process = await asyncio.create_subprocess_exec(
+                    self.python_path,
+                    '-u',  # バッファリングを無効化
+                    script_path,
+                    stdout=stdout_fd,
+                    stderr=stderr_fd,
+                    cwd=working_dir,
+                    env=env,  # 環境変数を明示的に渡す（重要）
+                    pass_fds=[stdout_fd, stderr_fd]  # ファイルディスクリプタを明示的に継承
+                )
+                
+                logger.info(f"プロセスを開始しました: PID {process.pid} (ジョブID: {job_id}), 環境変数BATCH_JOB_ID={env.get('BATCH_JOB_ID')}")
+                
+                # ファイルディスクリプタを閉じる（プロセスが継承した後）
+                # 注意: asyncio.create_subprocess_execはファイルディスクリプタを自動的に管理するため、
+                # ここで閉じても問題ないはずです
+                os.close(stdout_fd)
+                os.close(stderr_fd)
+            except Exception as e:
+                # エラーが発生した場合はファイルディスクリプタを閉じる
+                logger.error(f"プロセスの起動中にエラーが発生しました: {str(e)}", exc_info=True)
+                os.close(stdout_fd)
+                os.close(stderr_fd)
+                raise
             
             logger.info(f"プロセスを開始しました: PID {process.pid} (ジョブID: {job_id})")
             
