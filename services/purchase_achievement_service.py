@@ -232,7 +232,9 @@ class PurchaseAchievementService:
         is_public: Optional[bool] = None,
         prefecture: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """物件買取実績一覧を取得"""
         try:
@@ -250,6 +252,34 @@ class PurchaseAchievementService:
             where_clause = ""
             if conditions:
                 where_clause = "WHERE " + " AND ".join(conditions)
+            
+            # ソート処理
+            # 許可されたカラム名のホワイトリスト（SQLインジェクション対策）
+            allowed_sort_columns = {
+                'id': 'id',
+                'purchase_date': 'purchase_date',
+                'title': 'title',
+                'property_name': 'property_name',
+                'prefecture': 'prefecture',
+                'city': 'city',
+                'building_age': 'building_age',
+                'structure': 'structure',
+                'nearest_station': 'nearest_station',
+                'is_public': 'is_public',
+                'created_at': 'created_at',
+                'updated_at': 'updated_at'
+            }
+            
+            order_clause = "ORDER BY purchase_date DESC, created_at DESC"  # デフォルト
+            if sort_by and sort_by in allowed_sort_columns:
+                column = allowed_sort_columns[sort_by]
+                if sort_order and sort_order.lower() == 'asc':
+                    order_clause = f"ORDER BY {column} ASC, created_at DESC"
+                elif sort_order and sort_order.lower() == 'desc':
+                    order_clause = f"ORDER BY {column} DESC, created_at DESC"
+                else:
+                    # sort_orderが指定されていない場合は降順
+                    order_clause = f"ORDER BY {column} DESC, created_at DESC"
             
             query = f"""
                 SELECT 
@@ -272,7 +302,7 @@ class PurchaseAchievementService:
                     updated_at
                 FROM purchase_achievements
                 {where_clause}
-                ORDER BY purchase_date DESC, created_at DESC
+                {order_clause}
                 LIMIT %s OFFSET %s
             """
             

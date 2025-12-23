@@ -118,6 +118,8 @@ async def get_purchase_achievements(
     prefecture: Optional[str] = Query(None, description="都道府県でフィルタリング"),
     limit: int = Query(100, ge=1, le=1000, description="取得件数上限"),
     offset: int = Query(0, ge=0, description="オフセット"),
+    sort_by: Optional[str] = Query(None, description="ソート対象カラム"),
+    sort_order: Optional[str] = Query(None, description="ソート順（asc/desc）"),
     api_key: dict = Depends(verify_api_key)
 ):
     """物件買取実績一覧を取得"""
@@ -129,7 +131,9 @@ async def get_purchase_achievements(
             is_public=is_public,
             prefecture=prefecture,
             limit=limit,
-            offset=offset
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order
         )
         
         # 総件数を取得
