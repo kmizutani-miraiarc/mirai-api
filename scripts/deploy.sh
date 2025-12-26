@@ -31,13 +31,13 @@ cd "$APP_DIR"
 log "Stopping existing application..."
 sudo systemctl stop "$SERVICE_NAME" || true
 
-# バックアップを作成
-if [ -f "main.py" ]; then
-    BACKUP_FILE="backups/app.backup.$(date +%Y%m%d_%H%M%S).tar.gz"
-    log "Creating backup: $BACKUP_FILE"
-    sudo mkdir -p backups
-    sudo tar -czf "$BACKUP_FILE" --exclude='backups' --exclude='*.tar.gz' --exclude='.git' .
-fi
+# バックアップを作成（無効化）
+# if [ -f "main.py" ]; then
+#     BACKUP_FILE="backups/app.backup.$(date +%Y%m%d_%H%M%S).tar.gz"
+#     log "Creating backup: $BACKUP_FILE"
+#     sudo mkdir -p backups
+#     sudo tar -czf "$BACKUP_FILE" --exclude='backups' --exclude='*.tar.gz' --exclude='.git' .
+# fi
 
 # Gitから最新のコードを取得
 log "Pulling latest code from Git..."
@@ -126,14 +126,14 @@ for i in {1..5}; do
     if [ $i -eq 5 ]; then
         log "Health check failed after 5 attempts. Rolling back..."
         
-        # ロールバック
-        sudo systemctl stop "$SERVICE_NAME"
-        if [ -f "backups/app.backup.*.tar.gz" ]; then
-            LATEST_BACKUP=$(ls -t backups/app.backup.*.tar.gz | head -1)
-            sudo tar -xzf "$LATEST_BACKUP"
-            sudo systemctl start "$SERVICE_NAME"
-            log "Rollback completed."
-        fi
+        # ロールバック（バックアップが無効化されているため、ロールバックも無効化）
+        # sudo systemctl stop "$SERVICE_NAME"
+        # if [ -f "backups/app.backup.*.tar.gz" ]; then
+        #     LATEST_BACKUP=$(ls -t backups/app.backup.*.tar.gz | head -1)
+        #     sudo tar -xzf "$LATEST_BACKUP"
+        #     sudo systemctl start "$SERVICE_NAME"
+        #     log "Rollback completed."
+        # fi
         exit 1
     fi
 done
@@ -158,8 +158,8 @@ fi
 log "Deployment completed successfully!"
 log "Application is running on http://localhost:8000"
 
-# 古いバックアップを削除（7日以上古いもの）
-log "Cleaning up old backups..."
-find "$APP_DIR/backups" -name "app.backup.*.tar.gz" -type f -mtime +7 -exec sudo rm -f {} \; 2>/dev/null || true
+# 古いバックアップを削除（7日以上古いもの）（無効化）
+# log "Cleaning up old backups..."
+# find "$APP_DIR/backups" -name "app.backup.*.tar.gz" -type f -mtime +7 -exec sudo rm -f {} \; 2>/dev/null || true
 
 log "Deployment process finished."

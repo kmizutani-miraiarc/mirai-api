@@ -46,11 +46,11 @@ jobs:
           # 既存のアプリケーションを停止
           sudo systemctl stop mirai-api || true
           
-          # バックアップを作成
-          if [ -f "main.py" ]; then
-            sudo mkdir -p backups
-            sudo tar -czf backups/app.backup.$(date +%Y%m%d_%H%M%S).tar.gz --exclude='backups' --exclude='*.tar.gz' --exclude='.git' .
-          fi
+          # バックアップを作成（無効化）
+          # if [ -f "main.py" ]; then
+          #   sudo mkdir -p backups
+          #   sudo tar -czf backups/app.backup.$(date +%Y%m%d_%H%M%S).tar.gz --exclude='backups' --exclude='*.tar.gz' --exclude='.git' .
+          # fi
           
           # Gitから最新のコードを取得
           git fetch origin
@@ -121,14 +121,14 @@ jobs:
             sudo journalctl -u mirai-api -n 100 --no-pager || true
             echo "Checking if port 8000 is in use:"
             sudo netstat -tlnp | grep 8000 || sudo ss -tlnp | grep 8000 || echo "Port 8000 is not in use"
-            # ロールバック
-            sudo systemctl stop mirai-api || true
-            if ls backups/app.backup.*.tar.gz 1> /dev/null 2>&1; then
-              LATEST_BACKUP=$(ls -t backups/app.backup.*.tar.gz | head -1)
-              echo "Rolling back to: $LATEST_BACKUP"
-              sudo tar -xzf "$LATEST_BACKUP"
-              sudo systemctl start mirai-api
-            fi
+            # ロールバック（バックアップが無効化されているため、ロールバックも無効化）
+            # sudo systemctl stop mirai-api || true
+            # if ls backups/app.backup.*.tar.gz 1> /dev/null 2>&1; then
+            #   LATEST_BACKUP=$(ls -t backups/app.backup.*.tar.gz | head -1)
+            #   echo "Rolling back to: $LATEST_BACKUP"
+            #   sudo tar -xzf "$LATEST_BACKUP"
+            #   sudo systemctl start mirai-api
+            # fi
             exit 1
           else
             echo "Deployment successful!"
