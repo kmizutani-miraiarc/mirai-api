@@ -96,7 +96,11 @@ class ProfitManagementService:
                 update_fields = []
                 values = []
                 
-                for field, value in data.dict(exclude_unset=True).items():
+                # 粗利は編集不可のため、gross_profitを除外
+                data_dict = data.dict(exclude_unset=True)
+                data_dict.pop('gross_profit', None)  # gross_profitを除外
+                
+                for field, value in data_dict.items():
                     if value is not None:
                         update_fields.append(f"{field} = %s")
                         values.append(value)
