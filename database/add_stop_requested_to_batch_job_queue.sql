@@ -6,3 +6,4 @@ ADD COLUMN stop_requested BOOLEAN DEFAULT FALSE COMMENT '停止要求フラグ' 
 -- ALTER TABLE batch_job_queue
 -- ADD INDEX idx_stop_requested (stop_requested);
 
+

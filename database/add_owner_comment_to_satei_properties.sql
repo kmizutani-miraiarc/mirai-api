@@ -11,3 +11,4 @@ ADD COLUMN owner_comment TEXT COMMENT '担当者コメント' AFTER comment;
 
 
 
+

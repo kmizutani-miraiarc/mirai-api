@@ -13,3 +13,4 @@ ALTER TABLE batch_job_queue
 ADD COLUMN progress_percentage INT DEFAULT NULL COMMENT '進捗パーセンテージ（0-100）' 
 AFTER progress_message;
 
+
