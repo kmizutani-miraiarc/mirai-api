@@ -33,6 +33,10 @@ SLACK_CONFIG = {
         'webhook_url_env': 'SLACK_WEBHOOK_FUJIMURA',  # 環境変数名
         'mention': 'U05RQNU7BFC'
     },
+    'y-lim@miraiarc.jp': {
+        'webhook_url_env': 'SLACK_WEBHOOK_YLIM',  # 環境変数名
+        'mention': 'U09L7TC57GB'
+    },
     'ma-immedio@miraiarc.jp': {
         'webhook_url_env': 'SLACK_WEBHOOK_MA_IMMEDIO',  # 環境変数名
         'mention': 'here'
