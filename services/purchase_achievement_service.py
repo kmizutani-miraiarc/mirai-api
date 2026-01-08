@@ -246,8 +246,15 @@ class PurchaseAchievementService:
                 params.append(is_public)
             
             if prefecture:
-                conditions.append("prefecture = %s")
-                params.append(prefecture)
+                # 「その他」の場合は1都3県以外を取得
+                if prefecture == 'other':
+                    excluded_prefectures = ['東京都', '神奈川県', '千葉県', '埼玉県']
+                    placeholders = ','.join(['%s'] * len(excluded_prefectures))
+                    conditions.append(f"prefecture NOT IN ({placeholders})")
+                    params.extend(excluded_prefectures)
+                else:
+                    conditions.append("prefecture = %s")
+                    params.append(prefecture)
             
             where_clause = ""
             if conditions:
@@ -337,8 +344,15 @@ class PurchaseAchievementService:
                 params.append(is_public)
             
             if prefecture:
-                conditions.append("prefecture = %s")
-                params.append(prefecture)
+                # 「その他」の場合は1都3県以外を取得
+                if prefecture == 'other':
+                    excluded_prefectures = ['東京都', '神奈川県', '千葉県', '埼玉県']
+                    placeholders = ','.join(['%s'] * len(excluded_prefectures))
+                    conditions.append(f"prefecture NOT IN ({placeholders})")
+                    params.extend(excluded_prefectures)
+                else:
+                    conditions.append("prefecture = %s")
+                    params.append(prefecture)
             
             where_clause = ""
             if conditions:
