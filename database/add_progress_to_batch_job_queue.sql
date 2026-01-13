@@ -14,3 +14,4 @@ ADD COLUMN progress_percentage INT DEFAULT NULL COMMENT '進捗パーセンテ�
 AFTER progress_message;
 
 
+

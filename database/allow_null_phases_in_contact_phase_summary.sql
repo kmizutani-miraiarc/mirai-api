@@ -25,3 +25,4 @@ ADD UNIQUE KEY uk_aggregation_owner_phases (aggregation_date, owner_id, buy_phas
 
 
 
+

@@ -27,3 +27,4 @@ ADD INDEX idx_pattern_type (pattern_type);
 
 
 
+

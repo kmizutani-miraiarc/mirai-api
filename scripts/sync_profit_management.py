@@ -325,14 +325,19 @@ class ProfitManagementSync:
             purchase_settlement_date = None
             purchase_price = None
             purchase_owner_id = None
+            purchase_deal_id = None
             
             if purchase_deals:
                 purchase_deal = purchase_deals[0]
+                purchase_deal_id = purchase_deal.get("id")
                 purchase_properties = purchase_deal.get("properties", {})
                 purchase_settlement_date_str = purchase_properties.get("settlement_date")
                 purchase_settlement_date = self.parse_date(purchase_settlement_date_str)
                 purchase_price = self.parse_decimal(purchase_properties.get("research_purchase_price"))
                 purchase_owner_id = purchase_properties.get("hubspot_owner_id")
+            
+            # 販売取引IDを取得
+            sales_deal_id = deal_id
             
             # 既存の粗利按分管理データを確認（物件番号で重複チェック）
             existing = await self.profit_service.get_profit_management_by_property_id(bukken_id)
@@ -356,8 +361,10 @@ class ProfitManagementSync:
                     # property_type は編集可能項目なので更新しない
                     purchase_settlement_date=purchase_settlement_date,
                     purchase_price=purchase_price,
+                    purchase_deal_id=purchase_deal_id,
                     sales_settlement_date=sales_settlement_date,
                     sales_price=sales_price,
+                    sales_deal_id=sales_deal_id,
                     gross_profit=gross_profit_to_set,  # 粗利が未入力の場合のみ更新
                     profit_confirmed=False,  # OFF
                     accounting_year_month=accounting_year_month
@@ -376,8 +383,10 @@ class ProfitManagementSync:
                     property_type=None,  # 空欄
                     purchase_settlement_date=purchase_settlement_date,
                     purchase_price=purchase_price,
+                    purchase_deal_id=purchase_deal_id,
                     sales_settlement_date=sales_settlement_date,
                     sales_price=sales_price,
+                    sales_deal_id=sales_deal_id,
                     gross_profit=final_closing_profit,  # 【最終】粗利を設定
                     profit_confirmed=False,  # OFF
                     accounting_year_month=accounting_year_month
