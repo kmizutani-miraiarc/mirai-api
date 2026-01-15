@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import httpx
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -128,6 +129,11 @@ class ContactPhaseSummarySync:
             await self._save_to_database(aggregation_date, phase_counts, phase_contact_ids)
             
             logger.info(f"コンタクトフェーズ集計が完了しました: 保存件数={total_count}件")
+            
+            # 会社名を更新
+            logger.info("会社名の更新を開始します。")
+            updated_count = await self._update_company_names(aggregation_date)
+            logger.info(f"会社名の更新が完了しました: 更新件数={updated_count}件")
         except Exception as e:
             logger.error(f"コンタクトフェーズ集計中にエラーが発生しました: {str(e)}", exc_info=True)
         finally:
@@ -386,6 +392,98 @@ class ContactPhaseSummarySync:
         
         return phase_counts, phase_contact_ids
 
+    async def _get_company_name(self, contact_id: str) -> str:
+        """コンタクトIDから会社名を取得（リトライ付き）"""
+        max_retries = 2
+        retry_delay = 2.0
+        
+        for attempt in range(max_retries):
+            try:
+                from hubspot.client import HubSpotBaseClient
+                base_client = HubSpotBaseClient()
+                
+                # 認証情報を確認
+                if not base_client.api_key or base_client.api_key == "your-hubspot-api-key-here":
+                    logger.warning(f"HubSpot API key not configured, skipping company name for contact {contact_id}")
+                    return '-'
+                
+                # v4 APIを使用して関連会社を取得（タイムアウトを延長）
+                associations_response = await base_client._make_request(
+                    "GET", 
+                    f"/crm/v4/objects/contacts/{contact_id}/associations/companies",
+                    params={"limit": 100},
+                    timeout=60.0
+                )
+                if associations_response and associations_response.get('results'):
+                    # 最初の関連会社のIDを取得（v4 APIでは toObjectId を使用）
+                    first_result = associations_response.get('results', [{}])[0]
+                    if isinstance(first_result, dict):
+                        # v4 APIの形式: toObjectId を使用
+                        company_id = first_result.get('toObjectId')
+                        # v3 APIの形式にも対応（フォールバック）
+                        if not company_id:
+                            company_id = first_result.get('id')
+                    else:
+                        company_id = first_result
+                    
+                    if company_id:
+                        # 会社情報を取得（タイムアウトを延長）
+                        company_info = await base_client._make_request(
+                            "GET",
+                            f"/crm/v3/objects/companies/{company_id}",
+                            params={"properties": "name"},
+                            timeout=60.0
+                        )
+                        if company_info and company_info.get('properties'):
+                            company_name = company_info.get('properties', {}).get('name', '-')
+                            if company_name and company_name != '-':
+                                return company_name
+                return '-'
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    logger.warning(f"Authentication error when getting company name for contact {contact_id}: {str(e)}")
+                    return '-'
+                elif e.response.status_code == 429:
+                    # レート制限エラー：リトライ
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Rate limit error for contact {contact_id}, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        logger.warning(f"Rate limit error for contact {contact_id} after {max_retries} attempts, skipping")
+                        return '-'
+                else:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"HTTP error {e.response.status_code} for contact {contact_id}, retrying in {retry_delay}s")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        logger.warning(f"HTTP error when getting company name for contact {contact_id}: {e.response.status_code} - {str(e)}")
+                        return '-'
+            except httpx.TimeoutException as e:
+                # タイムアウトエラー：リトライ
+                if attempt < max_retries - 1:
+                    logger.warning(f"Timeout error for contact {contact_id}, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                else:
+                    logger.warning(f"Timeout error for contact {contact_id} after {max_retries} attempts, skipping")
+                    return '-'
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Error getting company name for contact {contact_id}, retrying in {retry_delay}s: {str(e)}")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                else:
+                    logger.warning(f"Failed to get company name for contact {contact_id}: {str(e)}")
+                    return '-'
+        
+        return '-'
+    
     async def _process_contact(
         self,
         contact: Dict[str, Any],
@@ -501,16 +599,30 @@ class ContactPhaseSummarySync:
             # どちらか一方でも有効な値があれば集計
             # 空欄のフェーズは無視する（集計しない）
             
+            # 会社名を取得（環境変数でスキップ可能）
+            # デフォルトはスキップ（処理速度を優先）
+            company_name = '-'
+            if os.getenv('INCLUDE_COMPANY_NAME', 'false').lower() == 'true':
+                company_name = await self._get_company_name(contact_id)
+            
             # 仕入フェーズが有効な場合：仕入フェーズを集計
             if buy_phase is not None:
                 phase_counts[owner_id]['buy'][buy_phase] += 1
-                phase_contact_ids[owner_id]['buy'][buy_phase].append({"id": contact_id, "name": contact_name})
+                phase_contact_ids[owner_id]['buy'][buy_phase].append({
+                    "id": contact_id, 
+                    "name": contact_name,
+                    "company_name": company_name
+                })
                 stats["successfully_aggregated"] += 1
             
             # 販売フェーズが有効な場合：販売フェーズを集計
             if sell_phase is not None:
                 phase_counts[owner_id]['sell'][sell_phase] += 1
-                phase_contact_ids[owner_id]['sell'][sell_phase].append({"id": contact_id, "name": contact_name})
+                phase_contact_ids[owner_id]['sell'][sell_phase].append({
+                    "id": contact_id, 
+                    "name": contact_name,
+                    "company_name": company_name
+                })
                 stats["successfully_aggregated"] += 1
             
             # 統計を更新（空欄のフェーズがある場合）
@@ -568,6 +680,124 @@ class ContactPhaseSummarySync:
                     logger.error(f"データベースへの保存中にエラーが発生しました: {str(e)}", exc_info=True)
                     await conn.rollback()
                     raise
+
+    async def _update_company_names(self, aggregation_date: date) -> int:
+        """保存されたcontact_idsから会社名を取得して更新（並列処理）"""
+        updated_count = 0
+        try:
+            async with self.db_pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    # 集計日の全レコードを取得
+                    query = """
+                        SELECT id, contact_ids
+                        FROM contact_phase_summary
+                        WHERE aggregation_date = %s
+                        AND contact_ids IS NOT NULL
+                    """
+                    await cursor.execute(query, (aggregation_date,))
+                    records = await cursor.fetchall()
+                    
+                    if not records:
+                        return 0
+                    
+                    logger.info(f"会社名更新対象: {len(records)}レコード")
+                    
+                    # 全コンタクトIDを収集（重複を除去）
+                    contact_id_map = {}  # {contact_id: [record_id, contact_data]}
+                    for record in records:
+                        record_id = record['id']
+                        contact_ids_json = record['contact_ids']
+                        
+                        try:
+                            contacts_data = json.loads(contact_ids_json)
+                            if not isinstance(contacts_data, list):
+                                continue
+                            
+                            for contact_data in contacts_data:
+                                if isinstance(contact_data, dict):
+                                    contact_id = contact_data.get('id', '')
+                                    if contact_id and (not contact_data.get('company_name') or contact_data.get('company_name') == '-'):
+                                        if contact_id not in contact_id_map:
+                                            contact_id_map[contact_id] = []
+                                        contact_id_map[contact_id].append((record_id, contact_data))
+                        except Exception as e:
+                            logger.warning(f"レコードID {record_id} のパースに失敗: {str(e)}")
+                            continue
+                    
+                    if not contact_id_map:
+                        logger.info("会社名更新対象のコンタクトがありません")
+                        return 0
+                    
+                    logger.info(f"会社名取得対象: {len(contact_id_map)}件のユニークなコンタクト")
+                    
+                    # 並列処理で会社名を取得（2件ずつ、レート制限を考慮）
+                    semaphore = asyncio.Semaphore(2)  # 同時実行数を制限（レート制限対策）
+                    company_names = {}
+                    
+                    async def fetch_company_name(contact_id: str):
+                        async with semaphore:
+                            # レート制限対策：待機時間を増やす
+                            await asyncio.sleep(1.0)
+                            return contact_id, await self._get_company_name(contact_id)
+                    
+                    # 全コンタクトの会社名を並列取得
+                    tasks = [fetch_company_name(contact_id) for contact_id in contact_id_map.keys()]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # 結果をマップに格納
+                    for result in results:
+                        if isinstance(result, Exception):
+                            logger.warning(f"会社名取得エラー: {str(result)}")
+                            continue
+                        contact_id, company_name = result
+                        company_names[contact_id] = company_name
+                    
+                    logger.info(f"会社名取得完了: {len(company_names)}件")
+                    
+                    # レコードごとに会社名を更新
+                    record_updates = {}  # {record_id: updated_contacts}
+                    
+                    # まず全レコードのデータを読み込む
+                    for record in records:
+                        record_id = record['id']
+                        try:
+                            contacts_data = json.loads(record['contact_ids'])
+                            if isinstance(contacts_data, list):
+                                record_updates[record_id] = contacts_data.copy()
+                            else:
+                                record_updates[record_id] = []
+                        except:
+                            record_updates[record_id] = []
+                    
+                    # 会社名を更新
+                    for contact_id, company_name in company_names.items():
+                        if contact_id in contact_id_map:
+                            for record_id, _ in contact_id_map[contact_id]:
+                                if record_id in record_updates:
+                                    for contact_data in record_updates[record_id]:
+                                        if isinstance(contact_data, dict) and contact_data.get('id') == contact_id:
+                                            contact_data['company_name'] = company_name
+                    
+                    # データベースを更新
+                    for record_id, updated_contacts in record_updates.items():
+                        try:
+                            updated_json = json.dumps(updated_contacts, ensure_ascii=False)
+                            update_query = """
+                                UPDATE contact_phase_summary
+                                SET contact_ids = %s
+                                WHERE id = %s
+                            """
+                            await cursor.execute(update_query, (updated_json, record_id))
+                            updated_count += 1
+                        except Exception as e:
+                            logger.warning(f"レコードID {record_id} の更新に失敗: {str(e)}")
+                    
+                    await conn.commit()
+                    logger.info(f"会社名更新完了: {updated_count}レコードを更新")
+                    return updated_count
+        except Exception as e:
+            logger.error(f"会社名更新中にエラーが発生しました: {str(e)}", exc_info=True)
+            return updated_count
 
 
 async def main():

@@ -47,10 +47,13 @@ class HubSpotContactsClient(HubSpotBaseClient):
             logger.error(f"Failed to get contacts: {str(e)}")
             return {"results": [], "paging": {}}
     
-    async def get_contact_by_id(self, contact_id: str) -> Optional[Dict[str, Any]]:
+    async def get_contact_by_id(self, contact_id: str, include_associations: bool = False) -> Optional[Dict[str, Any]]:
         """IDでコンタクトを取得"""
         try:
-            data = await self._make_request("GET", f"/crm/v3/objects/contacts/{contact_id}")
+            params = {}
+            if include_associations:
+                params["associations"] = "companies"
+            data = await self._make_request("GET", f"/crm/v3/objects/contacts/{contact_id}", params=params)
             return data
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
