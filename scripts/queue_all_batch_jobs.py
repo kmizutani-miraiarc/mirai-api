@@ -26,7 +26,8 @@ async def main():
     daily_jobs = [
         'purchase-achievements',
         'contact-sales-badge',
-        'profit-management'
+        'profit-management',
+        'property-sales-stage-summary'
     ]
     
     # 毎週月曜日に実行するジョブ

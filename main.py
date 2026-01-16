@@ -28,6 +28,7 @@ from routers.purchase_achievement import router as purchase_achievement_router
 from routers.contact_phase_summary import router as contact_phase_summary_router
 from routers.contact_phase_summary_monthly import router as contact_phase_summary_monthly_router
 from routers.contact_scoring_summary import router as contact_scoring_summary_router
+from routers.property_sales_stage_summary import router as property_sales_stage_summary_router
 from routers.batch_jobs import router as batch_jobs_router
 
 # ログ設定
@@ -344,6 +345,7 @@ app.include_router(purchase_achievement_router)
 app.include_router(contact_phase_summary_router)
 app.include_router(contact_phase_summary_monthly_router)
 app.include_router(contact_scoring_summary_router)
+app.include_router(property_sales_stage_summary_router)
 app.include_router(batch_jobs_router)
 
 # レスポンス用のモデル

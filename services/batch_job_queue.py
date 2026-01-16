@@ -55,6 +55,11 @@ class BatchJobQueue:
             'name': '粗利按分管理データ同期',
             'script': 'scripts/sync_profit_management.py',
             'priority': 4
+        },
+        'property-sales-stage-summary': {
+            'name': '物件別販売取引レポート集計',
+            'script': 'scripts/sync_property_sales_stage_summary.py',
+            'priority': 5
         }
     }
     
