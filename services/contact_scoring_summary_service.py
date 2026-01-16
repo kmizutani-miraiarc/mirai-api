@@ -385,15 +385,18 @@ class ContactScoringSummaryService:
                     if isinstance(contact_data, dict):
                         contact_id = contact_data.get('id', '')
                         contact_name = contact_data.get('name', contact_id)
+                        company_name = contact_data.get('company_name', '-')
                     else:
                         # 古い形式（文字列のみ）の場合
                         contact_id = str(contact_data)
                         contact_name = contact_id
+                        company_name = '-'
                     
                     if contact_id:
                         contacts.append({
                             "id": contact_id,
                             "name": contact_name,
+                            "company_name": company_name,
                             "hubspot_link": f"https://app.hubspot.com/contacts/{hubspot_id}/contact/{contact_id}"
                         })
                 
