@@ -192,52 +192,29 @@ async def upload_satei_property(
                         user_id = existing_user[0]
                         unique_id = existing_user[1]
                         logger.info(f"既存ユーザーを使用: user_id={user_id}, unique_id={unique_id}, email={email}")
-                        
-                        # 姓と名が入力されている場合は更新
-                        if firstName or lastName:
-                            update_fields = []
-                            update_values = []
-                            
-                            if firstName:
-                                update_fields.append("first_name = %s")
-                                update_values.append(firstName)
-                            if lastName:
-                                update_fields.append("last_name = %s")
-                                update_values.append(lastName)
-                            
-                            if update_fields:
-                                update_values.append(user_id)
-                                await cursor.execute(f"""
-                                    UPDATE satei_users
-                                    SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
-                                    WHERE id = %s
-                                """, tuple(update_values))
-                                logger.info(f"既存ユーザーの姓と名を更新: user_id={user_id}, first_name={firstName}, last_name={lastName}")
                     else:
                         # 新規ユーザーの場合はユニークIDを生成して登録
                         unique_id = str(uuid.uuid4())
                         await cursor.execute("""
-                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name, first_name, last_name)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                         """, (
                             unique_id,
                             email,
                             contact_info.get("contact_id") if contact_info else None,
                             contact_info.get("name") if contact_info else None,
                             contact_info.get("owner_id") if contact_info else None,
-                            contact_info.get("owner_name") if contact_info else None,
-                            firstName or None,
-                            lastName or None
+                            contact_info.get("owner_name") if contact_info else None
                         ))
                         
                         user_id = cursor.lastrowid
                         logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}")
                     
-                    # 査定物件を作成（担当者を含む）
+                    # 査定物件を作成（担当者とフォーム入力の氏名を含む）
                     await cursor.execute("""
-                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, comment, request_date, status)
-                        VALUES (%s, %s, %s, %s, CURDATE(), 'parsing')
-                    """, (user_id, owner_user_id, propertyName or "未設定", comment))
+                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, first_name, last_name, comment, request_date, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, CURDATE(), 'parsing')
+                    """, (user_id, owner_user_id, propertyName or "未設定", firstName or None, lastName or None, comment))
                     
                     satei_property_id = cursor.lastrowid
                     
@@ -592,9 +569,9 @@ async def get_user_properties_by_unique_id(
                 
                 user_id = user_result[0]
                 
-                # 査定物件を取得
+                # 査定物件を取得（フォーム入力の氏名はsatei_propertiesから取得）
                 await cursor.execute("""
-                    SELECT sp.*, su.email, su.name as user_name, su.first_name, su.last_name, su.unique_id
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     WHERE sp.user_id = %s
@@ -772,7 +749,7 @@ async def get_satei_properties(
                 total = total_result[0] if total_result else 0
                 
                 query = f"""
-                    SELECT sp.*, su.email, su.name as user_name, su.first_name, su.last_name, su.unique_id
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     {where_clause}
@@ -847,7 +824,7 @@ async def get_satei_property(
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute("""
-                    SELECT sp.*, su.email, su.name as user_name, su.first_name, su.last_name, su.unique_id, 
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, 
                            su.contact_id, su.owner_id, su.owner_name
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id

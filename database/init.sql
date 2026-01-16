@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS satei_properties (
     user_id INT NOT NULL COMMENT '査定物件ユーザー情報ID（外部キー）',
     owner_user_id INT COMMENT '担当者ユーザーID（usersテーブルへの外部キー）',
     property_name VARCHAR(255) COMMENT '物件名',
+    first_name VARCHAR(255) NULL COMMENT '名（フォーム入力）',
+    last_name VARCHAR(255) NULL COMMENT '姓（フォーム入力）',
     request_date DATE COMMENT '依頼日',
     status VARCHAR(50) DEFAULT 'parsing' COMMENT 'ステータス（parsing, evaluated, etc.）',
     estimated_price_from DECIMAL(12, 2) COMMENT '査定価格（下限）',
