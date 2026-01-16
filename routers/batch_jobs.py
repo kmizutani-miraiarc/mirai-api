@@ -96,4 +96,79 @@ async def add_batch_job_to_queue(
         )
 
 
+@router.get("/{job_id}/status", summary="ジョブのステータスを取得")
+async def get_job_status(
+    job_id: int,
+    api_key_info=Depends(verify_api_key)
+):
+    """
+    ジョブのステータスを取得
+    
+    Args:
+        job_id: ジョブID
+        api_key_info: APIキー情報
+        
+    Returns:
+        ジョブのステータス情報
+    """
+    try:
+        from database.connection import db_connection
+        import aiomysql
+        
+        await db_connection.create_pool()
+        if not db_connection.pool:
+            raise HTTPException(
+                status_code=500,
+                detail="データベース接続プールが作成されていません"
+            )
+        
+        async with db_connection.pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute("""
+                    SELECT 
+                        id,
+                        job_name,
+                        script_path,
+                        status,
+                        priority,
+                        created_at,
+                        started_at,
+                        completed_at,
+                        error_message
+                    FROM batch_job_queue
+                    WHERE id = %s
+                """, (job_id,))
+                
+                job = await cursor.fetchone()
+                
+                if not job:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"ジョブID {job_id} が見つかりません"
+                    )
+                
+                return {
+                    "status": "success",
+                    "data": {
+                        "id": job['id'],
+                        "job_name": job['job_name'],
+                        "status": job['status'],
+                        "created_at": job['created_at'].isoformat() if job['created_at'] else None,
+                        "started_at": job['started_at'].isoformat() if job['started_at'] else None,
+                        "completed_at": job['completed_at'].isoformat() if job['completed_at'] else None,
+                        "error_message": job.get('error_message')
+                    }
+                }
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_detail = f"ジョブステータスの取得中にエラーが発生しました: {str(e)}"
+        logger.error(error_detail, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
+        )
+
+
 
