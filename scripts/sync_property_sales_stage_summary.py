@@ -102,14 +102,11 @@ class PropertySalesStageSummarySync:
                 logger.error("販売パイプラインのステージ情報が取得できませんでした。")
                 return
             
-            logger.info(f"ステージ数: {len(self.stages)}")
-            
             # 集計日を取得（今日の日付）
             aggregation_date = date.today()
             
             # 販売取引を取得
             all_deals = await self._get_sales_deals()
-            logger.info(f"取得した取引数: {len(all_deals)}")
             
             if not all_deals:
                 logger.info("取引が取得できませんでした。")
@@ -428,7 +425,6 @@ class PropertySalesStageSummarySync:
                             )
                 
                 await conn.commit()
-                logger.info("データベースへの保存が完了しました。")
 
     async def _update_deal_details(
         self,
@@ -470,8 +466,6 @@ class PropertySalesStageSummarySync:
         if not all_deal_ids:
             logger.info("取引詳細更新対象の取引がありません")
             return 0
-        
-        logger.info(f"取引詳細取得対象: {len(all_deal_ids)}件のユニークな取引")
         
         # 並列処理で取引詳細を取得（2件ずつ、レート制限を考慮）
         semaphore = asyncio.Semaphore(2)
@@ -532,8 +526,6 @@ class PropertySalesStageSummarySync:
                     }
                     
                     processed_count += 1
-                    if processed_count % 50 == 0 or processed_count == total_count:
-                        logger.info(f"取引詳細取得進捗: {processed_count}/{total_count}件 ({int(processed_count/total_count*100)}%)")
                     
                     return deal_id, deal_detail
                 except Exception as e:
@@ -542,7 +534,6 @@ class PropertySalesStageSummarySync:
                     return deal_id, None
         
         # 全取引の詳細を並列取得
-        logger.info(f"取引詳細取得処理を開始します（全{total_count}件）")
         tasks = [fetch_deal_details(deal_id) for deal_id in all_deal_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
@@ -560,8 +551,6 @@ class PropertySalesStageSummarySync:
         
         if error_count > 10:
             logger.warning(f"取引詳細取得エラー: 合計{error_count}件のエラーが発生しました（最初の10件のみログ出力済み）")
-        
-        logger.info(f"取引詳細取得完了: {len(deal_details_map)}件（エラー: {error_count}件）")
         
         # データベースを更新
         async with self.db_pool.acquire() as conn:
@@ -611,7 +600,6 @@ class PropertySalesStageSummarySync:
                                 updated_count += 1
                 
                 await conn.commit()
-                logger.info(f"取引詳細更新完了: {updated_count}レコードを更新")
                 return updated_count
 
 

@@ -74,9 +74,7 @@ logger = logging.getLogger(__name__)
 
 # 環境変数の確認（デバッグ用）
 batch_job_id = os.environ.get('BATCH_JOB_ID')
-if batch_job_id:
-    logger.info(f"BATCH_JOB_ID環境変数が設定されています: {batch_job_id}")
-else:
+if not batch_job_id:
     logger.warning("BATCH_JOB_ID環境変数が設定されていません")
 
 # パイプラインID

@@ -700,8 +700,6 @@ class ContactPhaseSummarySync:
                     if not records:
                         return 0
                     
-                    logger.info(f"会社名更新対象: {len(records)}レコード")
-                    
                     # 全コンタクトIDを収集（重複を除去）
                     contact_id_map = {}  # {contact_id: [record_id, contact_data]}
                     for record in records:
@@ -728,8 +726,6 @@ class ContactPhaseSummarySync:
                         logger.info("会社名更新対象のコンタクトがありません")
                         return 0
                     
-                    logger.info(f"会社名取得対象: {len(contact_id_map)}件のユニークなコンタクト")
-                    
                     # 並列処理で会社名を取得（2件ずつ、レート制限を考慮）
                     semaphore = asyncio.Semaphore(2)  # 同時実行数を制限（レート制限対策）
                     company_names = {}
@@ -751,8 +747,6 @@ class ContactPhaseSummarySync:
                             continue
                         contact_id, company_name = result
                         company_names[contact_id] = company_name
-                    
-                    logger.info(f"会社名取得完了: {len(company_names)}件")
                     
                     # レコードごとに会社名を更新
                     record_updates = {}  # {record_id: updated_contacts}
@@ -793,7 +787,6 @@ class ContactPhaseSummarySync:
                             logger.warning(f"レコードID {record_id} の更新に失敗: {str(e)}")
                     
                     await conn.commit()
-                    logger.info(f"会社名更新完了: {updated_count}レコードを更新")
                     return updated_count
         except Exception as e:
             logger.error(f"会社名更新中にエラーが発生しました: {str(e)}", exc_info=True)

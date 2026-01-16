@@ -709,8 +709,6 @@ class ContactPhaseSummaryMonthlySync:
                     if not records:
                         return 0
                     
-                    logger.info(f"会社名更新対象: {len(records)}レコード")
-                    
                     # 全コンタクトIDを収集（重複を除去）
                     contact_id_map = {}  # {contact_id: [record_id, contact_data]}
                     for record in records:
@@ -737,8 +735,6 @@ class ContactPhaseSummaryMonthlySync:
                         logger.info("会社名更新対象のコンタクトがありません")
                         return 0
                     
-                    logger.info(f"会社名取得対象: {len(contact_id_map)}件のユニークなコンタクト")
-                    
                     # 並列処理で会社名を取得（2件ずつ、レート制限を考慮）
                     semaphore = asyncio.Semaphore(2)  # 同時実行数を制限（レート制限対策）
                     company_names = {}
@@ -752,13 +748,9 @@ class ContactPhaseSummaryMonthlySync:
                             await asyncio.sleep(1.0)
                             result = contact_id, await self._get_company_name(contact_id)
                             processed_count += 1
-                            # 進捗をログ出力（100件ごと、または最後）
-                            if processed_count % 100 == 0 or processed_count == total_count:
-                                logger.info(f"会社名取得進捗: {processed_count}/{total_count}件 ({int(processed_count/total_count*100)}%)")
                             return result
                     
                     # 全コンタクトの会社名を並列取得
-                    logger.info(f"会社名取得処理を開始します（全{total_count}件）")
                     tasks = [fetch_company_name(contact_id) for contact_id in contact_id_map.keys()]
                     results = await asyncio.gather(*tasks, return_exceptions=True)
                     
@@ -775,8 +767,6 @@ class ContactPhaseSummaryMonthlySync:
                     
                     if error_count > 10:
                         logger.warning(f"会社名取得エラー: 合計{error_count}件のエラーが発生しました（最初の10件のみログ出力済み）")
-                    
-                    logger.info(f"会社名取得完了: {len(company_names)}件（エラー: {error_count}件）")
                     
                     # レコードごとに会社名を更新
                     record_updates = {}  # {record_id: updated_contacts}
@@ -817,7 +807,6 @@ class ContactPhaseSummaryMonthlySync:
                             logger.warning(f"レコードID {record_id} の更新に失敗: {str(e)}")
                     
                     await conn.commit()
-                    logger.info(f"会社名更新完了: {updated_count}レコードを更新")
                     return updated_count
         except Exception as e:
             logger.error(f"会社名更新中にエラーが発生しました: {str(e)}", exc_info=True)
