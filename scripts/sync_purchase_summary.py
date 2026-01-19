@@ -129,6 +129,12 @@ class PurchaseSummarySync:
                     total_deals_count += month_data.get('total_deals', 0)
             logger.info(f"集計結果サマリー: 担当者数={len([k for k in summary_data.keys() if k not in ['_ownerOrder', '_totalSummary']])}, 総取引数={total_deals_count}")
             
+            # 取引詳細を取得して保存（エラーが発生してもバッチ処理は続行）
+            try:
+                await self._update_deal_details(summary_data, filtered_deals)
+            except Exception as e:
+                logger.error(f"取引詳細の取得中にエラーが発生しましたが、バッチ処理は続行します: {str(e)}", exc_info=True)
+            
             # 去年と今年のデータを分けて保存
             for year in [last_year, current_year]:
                 year_summary_data = self._filter_by_year(summary_data, year)
@@ -176,6 +182,7 @@ class PurchaseSummarySync:
             "hubspot_owner_id",
             "bukken_created",
             "deal_non_applicable",
+            "appraisal_property",  # 査定物件フラグ
             "deal_survey_review_date",
             "research_purchase_price_date",
             "deal_probability_a_date",
@@ -325,8 +332,13 @@ class PurchaseSummarySync:
                     'total_deals': 0,
                     'stage_breakdown': {},
                     'applicable_deals': 0,
-                    'non_applicable_deals': 0
+                    'non_applicable_deals': 0,
+                    'deal_ids_by_stage': {},  # ステージ別の取引IDリスト
+                    'deal_ids_by_monthly_item': {}  # 当月系項目別の取引IDリスト
                 }
+            
+            # 取引IDを取得
+            deal_id = deal.get("id")
             
             # 取引数をカウント
             summary_data[owner_id]['monthly_data'][year_month]['total_deals'] += 1
@@ -345,7 +357,27 @@ class PurchaseSummarySync:
             
             if stage_name not in summary_data[owner_id]['monthly_data'][year_month]['stage_breakdown']:
                 summary_data[owner_id]['monthly_data'][year_month]['stage_breakdown'][stage_name] = 0
+                summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage'][stage_name] = []
             summary_data[owner_id]['monthly_data'][year_month]['stage_breakdown'][stage_name] += 1
+            
+            # ステージ別の取引IDを保存
+            if deal_id and stage_name in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']:
+                if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage'][stage_name]:
+                    summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage'][stage_name].append(deal_id)
+            
+            # 該当/非該当物件の取引IDを保存
+            if deal_id:
+                if '該当物件' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']:
+                    summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['該当物件'] = []
+                if '非該当物件' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']:
+                    summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['非該当物件'] = []
+                
+                if not is_non_applicable:
+                    if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['該当物件']:
+                        summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['該当物件'].append(deal_id)
+                else:
+                    if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['非該当物件']:
+                        summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['非該当物件'].append(deal_id)
         
         # 当月系のデータを集計（リアルタイム集計と同じロジック）
         for owner_id in summary_data.keys():
@@ -363,6 +395,7 @@ class PurchaseSummarySync:
         for deal in all_deals:
             properties = deal.get("properties", {})
             owner_id = properties.get("hubspot_owner_id")
+            deal_id = deal.get("id")
             
             if not owner_id or owner_id not in summary_data:
                 continue
@@ -375,6 +408,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_bukken_created_counts']:
                         summary_data[owner_id]['monthly_bukken_created_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_bukken_created_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '当月情報登録' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月情報登録'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月情報登録']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月情報登録'].append(deal_id)
                 except:
                     pass
             
@@ -386,6 +428,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_survey_review_counts']:
                         summary_data[owner_id]['monthly_survey_review_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_survey_review_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '当月調査検討' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月調査検討'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月調査検討']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月調査検討'].append(deal_id)
                 except:
                     pass
             
@@ -398,6 +449,15 @@ class PurchaseSummarySync:
                         if year_month not in summary_data[owner_id]['monthly_purchase_counts']:
                             summary_data[owner_id]['monthly_purchase_counts'][year_month] = 0
                         summary_data[owner_id]['monthly_purchase_counts'][year_month] += 1
+                        
+                        # 取引IDを保存
+                        if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                            if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                                summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                            if '当月買付提出' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                                summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月買付提出'] = []
+                            if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月買付提出']:
+                                summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月買付提出'].append(deal_id)
                 except:
                     pass
             
@@ -409,6 +469,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_probability_b_counts']:
                         summary_data[owner_id]['monthly_probability_b_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_probability_b_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '当月見込み確度B' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見込み確度B'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見込み確度B']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見込み確度B'].append(deal_id)
                 except:
                     pass
             
@@ -420,6 +489,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_probability_a_counts']:
                         summary_data[owner_id]['monthly_probability_a_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_probability_a_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '当月見込み確度A' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見込み確度A'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見込み確度A']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見込み確度A'].append(deal_id)
                 except:
                     pass
             
@@ -431,6 +509,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_farewell_counts']:
                         summary_data[owner_id]['monthly_farewell_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_farewell_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '当月見送り' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見送り'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見送り']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月見送り'].append(deal_id)
                 except:
                     pass
             
@@ -442,6 +529,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_lost_counts']:
                         summary_data[owner_id]['monthly_lost_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_lost_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '当月失注' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月失注'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月失注']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['当月失注'].append(deal_id)
                 except:
                     pass
             
@@ -453,6 +549,15 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_contract_counts']:
                         summary_data[owner_id]['monthly_contract_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_contract_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '契約' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['契約'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['契約']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['契約'].append(deal_id)
                 except:
                     pass
             
@@ -464,10 +569,184 @@ class PurchaseSummarySync:
                     if year_month not in summary_data[owner_id]['monthly_settlement_counts']:
                         summary_data[owner_id]['monthly_settlement_counts'][year_month] = 0
                     summary_data[owner_id]['monthly_settlement_counts'][year_month] += 1
+                    
+                    # 取引IDを保存
+                    if deal_id and year_month in summary_data[owner_id].get('monthly_data', {}):
+                        if 'deal_ids_by_monthly_item' not in summary_data[owner_id]['monthly_data'][year_month]:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item'] = {}
+                        if '決済' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['決済'] = []
+                        if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['決済']:
+                            summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_monthly_item']['決済'].append(deal_id)
                 except:
                     pass
         
         return summary_data
+
+    async def _update_deal_details(
+        self,
+        summary_data: Dict[str, Dict[str, Any]],
+        all_deals: List[Dict[str, Any]]
+    ):
+        """取引詳細を取得してsummary_dataに追加（会社名・コンタクト名を含む）"""
+        # 全取引IDを収集（重複を除去）
+        all_deal_ids = set()
+        deal_id_to_context = {}  # {deal_id: [(owner_id, year_month, stage_name, item_type)]}
+        
+        for owner_id, owner_data in summary_data.items():
+            if owner_id in ['_ownerOrder', '_totalSummary']:
+                continue
+            
+            for year_month, month_data in owner_data.get('monthly_data', {}).items():
+                # ステージ別の取引IDを収集
+                deal_ids_by_stage = month_data.get('deal_ids_by_stage', {})
+                for stage_name, deal_ids in deal_ids_by_stage.items():
+                    for deal_id in deal_ids:
+                        if deal_id:
+                            all_deal_ids.add(deal_id)
+                            if deal_id not in deal_id_to_context:
+                                deal_id_to_context[deal_id] = []
+                            deal_id_to_context[deal_id].append((owner_id, year_month, stage_name, 'stage'))
+                
+                # 当月系項目別の取引IDを収集
+                deal_ids_by_monthly_item = month_data.get('deal_ids_by_monthly_item', {})
+                for item_name, deal_ids in deal_ids_by_monthly_item.items():
+                    for deal_id in deal_ids:
+                        if deal_id:
+                            all_deal_ids.add(deal_id)
+                            if deal_id not in deal_id_to_context:
+                                deal_id_to_context[deal_id] = []
+                            deal_id_to_context[deal_id].append((owner_id, year_month, item_name, 'monthly_item'))
+        
+        if not all_deal_ids:
+            logger.info("取引詳細更新対象の取引がありません")
+            return
+        
+        # 並列処理で取引詳細を取得（1件ずつ、レート制限を考慮）
+        semaphore = asyncio.Semaphore(1)
+        deal_details_map = {}
+        processed_count = 0
+        total_count = len(all_deal_ids)
+        
+        async def fetch_deal_details(deal_id: str):
+            nonlocal processed_count
+            async with semaphore:
+                await asyncio.sleep(2.0)  # レート制限対策（2秒待機）
+                try:
+                    deal = await self.deals_client.get_deal_by_id_with_associations(deal_id)
+                    if not deal:
+                        processed_count += 1
+                        return deal_id, None
+                    
+                    properties = deal.get("properties", {})
+                    associations = deal.get("associations", {})
+                    
+                    # 会社名を取得（最初の関連会社）
+                    company_name = '-'
+                    companies = associations.get("companies", [])
+                    if companies and len(companies) > 0:
+                        company = companies[0]
+                        company_properties = company.get("properties", {})
+                        company_name = company_properties.get("name", '-')
+                    
+                    # コンタクト名を取得（最初の関連コンタクト）
+                    contact_name = '-'
+                    contacts = associations.get("contacts", [])
+                    if contacts and len(contacts) > 0:
+                        contact = contacts[0]
+                        contact_properties = contact.get("properties", {})
+                        firstname_raw = contact_properties.get("firstname")
+                        lastname_raw = contact_properties.get("lastname")
+                        firstname = firstname_raw.strip() if firstname_raw else ""
+                        lastname = lastname_raw.strip() if lastname_raw else ""
+                        if lastname and firstname:
+                            contact_name = f"{lastname} {firstname}"
+                        elif lastname:
+                            contact_name = lastname
+                        elif firstname:
+                            contact_name = firstname
+                        else:
+                            contact_name = contact_properties.get("email", '-')
+                    
+                    hubspot_id = os.getenv('HUBSPOT_ID', '')
+                    deal_detail = {
+                        "id": deal_id,
+                        "name": properties.get("dealname", "取引名なし"),
+                        "amount": properties.get("amount", 0),
+                        "stage": properties.get("dealstage", ""),
+                        "owner": properties.get("hubspot_owner_id", ""),
+                        "company_name": company_name,
+                        "contact_name": contact_name,
+                        "createdDate": properties.get("createdate", ""),
+                        "appraisal_property": properties.get("appraisal_property", False),  # 査定物件フラグ
+                        "hubspot_link": f"https://app.hubspot.com/contacts/{hubspot_id}/record/0-3/{deal_id}/"
+                    }
+                    
+                    processed_count += 1
+                    if processed_count % 100 == 0:
+                        logger.info(f"取引詳細取得進捗: {processed_count}/{total_count}")
+                    
+                    return deal_id, deal_detail
+                except Exception as e:
+                    logger.warning(f"取引ID {deal_id} の詳細取得に失敗: {str(e)}")
+                    processed_count += 1
+                    return deal_id, None
+        
+        # 全取引の詳細を並列取得
+        logger.info(f"取引詳細取得を開始: {total_count}件")
+        tasks = [fetch_deal_details(deal_id) for deal_id in all_deal_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 結果をマップに格納
+        error_count = 0
+        for result in results:
+            if isinstance(result, Exception):
+                error_count += 1
+                if error_count <= 10:
+                    logger.warning(f"取引詳細取得エラー: {str(result)}")
+                continue
+            deal_id, deal_detail = result
+            if deal_detail:
+                deal_details_map[deal_id] = deal_detail
+        
+        if error_count > 10:
+            logger.warning(f"取引詳細取得エラー: 合計{error_count}件のエラーが発生しました（最初の10件のみログ出力済み）")
+        
+        logger.info(f"取引詳細取得完了: {len(deal_details_map)}件")
+        
+        # summary_dataに取引詳細を追加
+        for deal_id, deal_detail in deal_details_map.items():
+            if deal_id not in deal_id_to_context:
+                continue
+            
+            for owner_id, year_month, stage_or_item_name, item_type in deal_id_to_context[deal_id]:
+                if owner_id not in summary_data:
+                    continue
+                
+                if year_month not in summary_data[owner_id].get('monthly_data', {}):
+                    continue
+                
+                month_data = summary_data[owner_id]['monthly_data'][year_month]
+                
+                if item_type == 'stage':
+                    # ステージ別の取引詳細を保存
+                    if 'deal_details_by_stage' not in month_data:
+                        month_data['deal_details_by_stage'] = {}
+                    if stage_or_item_name not in month_data['deal_details_by_stage']:
+                        month_data['deal_details_by_stage'][stage_or_item_name] = []
+                    # 重複チェック
+                    if not any(d.get('id') == deal_id for d in month_data['deal_details_by_stage'][stage_or_item_name]):
+                        month_data['deal_details_by_stage'][stage_or_item_name].append(deal_detail)
+                
+                elif item_type == 'monthly_item':
+                    # 当月系項目別の取引詳細を保存
+                    if 'deal_details_by_monthly_item' not in month_data:
+                        month_data['deal_details_by_monthly_item'] = {}
+                    if stage_or_item_name not in month_data['deal_details_by_monthly_item']:
+                        month_data['deal_details_by_monthly_item'][stage_or_item_name] = []
+                    # 重複チェック
+                    if not any(d.get('id') == deal_id for d in month_data['deal_details_by_monthly_item'][stage_or_item_name]):
+                        month_data['deal_details_by_monthly_item'][stage_or_item_name].append(deal_detail)
 
     def _filter_by_year(
         self,

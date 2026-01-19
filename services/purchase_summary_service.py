@@ -229,3 +229,157 @@ class PurchaseSummaryService:
         )
         
         return total_summary
+
+    async def get_deal_ids(
+        self,
+        year: int,
+        owner_id: str,
+        year_month: str,
+        stage_name: str
+    ) -> Dict[str, Any]:
+        """指定した条件の取引IDリストを取得"""
+        async with self.db_pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # 年月から月を抽出
+                month = int(year_month.split('-')[1])
+                
+                # owner_idが'total'の場合は全担当者のデータを取得
+                if owner_id == 'total':
+                    query = """
+                        SELECT monthly_data
+                        FROM purchase_summary
+                        WHERE aggregation_year = %s
+                          AND month = %s
+                    """
+                    await cursor.execute(query, (year, month))
+                    results = await cursor.fetchall()
+                else:
+                    query = """
+                        SELECT monthly_data
+                        FROM purchase_summary
+                        WHERE aggregation_year = %s
+                          AND owner_id = %s
+                          AND month = %s
+                    """
+                    await cursor.execute(query, (year, owner_id, month))
+                    result = await cursor.fetchone()
+                    results = [result] if result else []
+                
+                if not results:
+                    return {
+                        "deal_ids": []
+                    }
+                
+                # 全担当者のデータをマージ
+                all_deal_ids = []
+                for result in results:
+                    if not result or not result.get('monthly_data'):
+                        continue
+                    
+                    # JSON形式の月別データをパース
+                    monthly_data_str = result['monthly_data']
+                    try:
+                        monthly_data = json.loads(monthly_data_str)
+                        
+                        # ステージ別または当月系項目別の取引IDリストを取得
+                        deal_ids = []
+                        
+                        # ステージ別の取引IDリスト
+                        if 'deal_ids_by_stage' in monthly_data and stage_name in monthly_data['deal_ids_by_stage']:
+                            deal_ids = monthly_data['deal_ids_by_stage'][stage_name]
+                        
+                        # 当月系項目別の取引IDリスト
+                        elif 'deal_ids_by_monthly_item' in monthly_data and stage_name in monthly_data['deal_ids_by_monthly_item']:
+                            deal_ids = monthly_data['deal_ids_by_monthly_item'][stage_name]
+                        
+                        if isinstance(deal_ids, list):
+                            # 重複を除去してマージ
+                            for deal_id in deal_ids:
+                                if deal_id not in all_deal_ids:
+                                    all_deal_ids.append(deal_id)
+                                    
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.error(f"月別データのパースエラー: {str(e)}")
+                        continue
+                
+                return {
+                    "deal_ids": all_deal_ids
+                }
+
+    async def get_deal_details(
+        self,
+        year: int,
+        owner_id: str,
+        year_month: str,
+        stage_name: str
+    ) -> Dict[str, Any]:
+        """指定した条件の取引詳細を取得（バッチ処理で保存されたデータから）"""
+        async with self.db_pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # 年月から月を抽出
+                month = int(year_month.split('-')[1])
+                
+                # owner_idが'total'の場合は全担当者のデータを取得
+                if owner_id == 'total':
+                    query = """
+                        SELECT owner_id, monthly_data
+                        FROM purchase_summary
+                        WHERE aggregation_year = %s
+                          AND month = %s
+                    """
+                    await cursor.execute(query, (year, month))
+                    results = await cursor.fetchall()
+                else:
+                    query = """
+                        SELECT owner_id, monthly_data
+                        FROM purchase_summary
+                        WHERE aggregation_year = %s
+                          AND owner_id = %s
+                          AND month = %s
+                    """
+                    await cursor.execute(query, (year, owner_id, month))
+                    result = await cursor.fetchone()
+                    results = [result] if result else []
+                
+                if not results:
+                    return {
+                        "deals": []
+                    }
+                
+                # 全担当者のデータをマージ
+                all_deal_details = []
+                for result in results:
+                    if not result or not result.get('monthly_data'):
+                        continue
+                    
+                    # JSON形式の月別データをパース
+                    monthly_data_str = result['monthly_data']
+                    try:
+                        monthly_data = json.loads(monthly_data_str)
+                        
+                        # ステージ別または当月系項目別の取引詳細を取得
+                        deal_details = []
+                        
+                        # ステージ別の取引詳細
+                        if 'deal_details_by_stage' in monthly_data and stage_name in monthly_data['deal_details_by_stage']:
+                            deal_details = monthly_data['deal_details_by_stage'][stage_name]
+                        
+                        # 当月系項目別の取引詳細
+                        elif 'deal_details_by_monthly_item' in monthly_data and stage_name in monthly_data['deal_details_by_monthly_item']:
+                            deal_details = monthly_data['deal_details_by_monthly_item'][stage_name]
+                        
+                        if isinstance(deal_details, list):
+                            # 重複を除去してマージ（IDで判定）
+                            existing_ids = {d.get('id') for d in all_deal_details}
+                            for deal_detail in deal_details:
+                                if deal_detail.get('id') and deal_detail.get('id') not in existing_ids:
+                                    all_deal_details.append(deal_detail)
+                                    existing_ids.add(deal_detail.get('id'))
+                                    
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.error(f"月別データのパースエラー: {str(e)}")
+                        continue
+                
+                return {
+                    "deals": all_deal_details
+                }
