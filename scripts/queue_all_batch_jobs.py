@@ -27,7 +27,9 @@ async def main():
         'purchase-achievements',
         'contact-sales-badge',
         'profit-management',
-        'property-sales-stage-summary'
+        'property-sales-stage-summary',
+        'purchase-summary',
+        'sales-summary'
     ]
     
     # 毎週月曜日に実行するジョブ

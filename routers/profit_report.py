@@ -3,6 +3,8 @@ from typing import Optional
 import logging
 
 from services.profit_report_service import ProfitReportService
+from services.purchase_summary_service import PurchaseSummaryService
+from services.sales_summary_service import SalesSummaryService
 from database.connection import get_db_pool
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,16 @@ router = APIRouter(prefix="/profit-report", tags=["profit-report"])
 def get_profit_report_service(db_pool=Depends(get_db_pool)) -> ProfitReportService:
     """粗利集計レポートサービスの依存性注入"""
     return ProfitReportService(db_pool)
+
+
+def get_purchase_summary_service(db_pool=Depends(get_db_pool)) -> PurchaseSummaryService:
+    """仕入集計レポートサービスの依存性注入"""
+    return PurchaseSummaryService(db_pool)
+
+
+def get_sales_summary_service(db_pool=Depends(get_db_pool)) -> SalesSummaryService:
+    """販売集計レポートサービスの依存性注入"""
+    return SalesSummaryService(db_pool)
 
 
 # API認証の依存関数
@@ -76,6 +88,34 @@ async def get_profit_report(
     except Exception as e:
         logger.error(f"粗利集計レポート取得エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"粗利集計レポートの取得に失敗しました: {str(e)}")
+
+
+@router.get("/purchase-summary", summary="仕入集計レポート取得（バッチ処理版）")
+async def get_purchase_summary_report(
+    year: int = Query(..., description="集計年"),
+    service: PurchaseSummaryService = Depends(get_purchase_summary_service),
+    api_key_info=Depends(verify_api_key)
+):
+    """仕入集計レポートを取得します（バッチ処理で集計されたデータを取得）"""
+    try:
+        return await service.get_latest_summary(year)
+    except Exception as e:
+        logger.error(f"仕入集計レポート取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"仕入集計レポートの取得に失敗しました: {str(e)}")
+
+
+@router.get("/sales-summary", summary="販売集計レポート取得（バッチ処理版）")
+async def get_sales_summary_report(
+    year: int = Query(..., description="集計年"),
+    service: SalesSummaryService = Depends(get_sales_summary_service),
+    api_key_info=Depends(verify_api_key)
+):
+    """販売集計レポートを取得します（バッチ処理で集計されたデータを取得）"""
+    try:
+        return await service.get_latest_summary(year)
+    except Exception as e:
+        logger.error(f"販売集計レポート取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"販売集計レポートの取得に失敗しました: {str(e)}")
 
 
 

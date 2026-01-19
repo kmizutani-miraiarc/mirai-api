@@ -60,6 +60,16 @@ class BatchJobQueue:
             'name': '物件別販売取引レポート集計',
             'script': 'scripts/sync_property_sales_stage_summary.py',
             'priority': 5
+        },
+        'purchase-summary': {
+            'name': '仕入集計レポート集計',
+            'script': 'scripts/sync_purchase_summary.py',
+            'priority': 5
+        },
+        'sales-summary': {
+            'name': '販売集計レポート集計',
+            'script': 'scripts/sync_sales_summary.py',
+            'priority': 5
         }
     }
     
