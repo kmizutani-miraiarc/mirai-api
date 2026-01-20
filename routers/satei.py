@@ -49,6 +49,7 @@ async def upload_satei_property(
     email: str = Form(...),
     files: List[UploadFile] = File(...),
     propertyName: Optional[str] = Form(None),
+    companyName: Optional[str] = Form(None),
     comment: Optional[str] = Form(None),
     firstName: Optional[str] = Form(None),
     lastName: Optional[str] = Form(None),
@@ -99,6 +100,7 @@ async def upload_satei_property(
             if search_contacts:
                 contact = search_contacts[0]
                 properties = contact.get("properties", {})
+                contact_id = contact.get("id")
                 
                 # Noneを空文字列に変換してから結合
                 lastname = properties.get("lastname") or ""
@@ -106,7 +108,7 @@ async def upload_satei_property(
                 full_name = (lastname + " " + firstname).strip() or None
                 
                 contact_info = {
-                    "contact_id": contact.get("id"),
+                    "contact_id": contact_id,
                     "name": full_name,
                     "owner_id": properties.get("hubspot_owner_id"),
                     "owner_name": None
@@ -124,13 +126,14 @@ async def upload_satei_property(
                 logger.info(f"コンタクト確認: {contact_email}")
                 
                 if contact_email == email:
+                    contact_id = contact.get("id")
                     # Noneを空文字列に変換してから結合
                     lastname = properties.get("lastname") or ""
                     firstname = properties.get("firstname") or ""
                     full_name = (lastname + " " + firstname).strip() or None
                     
                     contact_info = {
-                        "contact_id": contact.get("id"),
+                        "contact_id": contact_id,
                         "name": full_name,
                         "owner_id": properties.get("hubspot_owner_id"),
                         "owner_name": properties.get("hs_analytics_first_visit_url")
@@ -210,11 +213,11 @@ async def upload_satei_property(
                         user_id = cursor.lastrowid
                         logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}")
                     
-                    # 査定物件を作成（担当者とフォーム入力の氏名を含む）
+                    # 査定物件を作成（担当者とフォーム入力の氏名、会社名を含む）
                     await cursor.execute("""
-                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, first_name, last_name, comment, request_date, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, CURDATE(), 'parsing')
-                    """, (user_id, owner_user_id, propertyName or "未設定", firstName or None, lastName or None, comment))
+                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, company_name, first_name, last_name, comment, request_date, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, CURDATE(), 'parsing')
+                    """, (user_id, owner_user_id, propertyName or "未設定", companyName or None, firstName or None, lastName or None, comment))
                     
                     satei_property_id = cursor.lastrowid
                     
@@ -892,6 +895,7 @@ async def get_satei_property(
 class SateiPropertyUpdateRequest(BaseModel):
     """査定物件更新リクエスト"""
     property_name: Optional[str] = None
+    company_name: Optional[str] = None
     status: Optional[str] = None
     estimated_price_from: Optional[float] = None
     estimated_price_to: Optional[float] = None
@@ -966,7 +970,7 @@ async def update_satei_property(
                 update_fields = []
                 update_values = []
                 
-                allowed_fields = ['property_name', 'status', 'estimated_price_from', 
+                allowed_fields = ['property_name', 'company_name', 'status', 'estimated_price_from', 
                                 'estimated_price_to', 'comment', 'owner_comment', 'evaluation_date',
                                 'for_sale', 'evaluation_result']
                 
