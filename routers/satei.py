@@ -1046,6 +1046,22 @@ async def update_satei_property(
     try:
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
+                # 更新前のfor_saleの値を取得（販売希望通知用）
+                old_for_sale = False
+                try:
+                    await cursor.execute("""
+                        SELECT for_sale FROM satei_properties WHERE id = %s
+                    """, (property_id,))
+                    old_for_sale_result = await cursor.fetchone()
+                    if old_for_sale_result and old_for_sale_result[0] is not None:
+                        old_for_sale_value = old_for_sale_result[0]
+                        # Boolean型やTINYINT(1)の場合、0/1やTrue/Falseとして返される可能性がある
+                        old_for_sale = bool(old_for_sale_value)
+                    logger.info(f"更新前のfor_sale値: {old_for_sale} (raw: {old_for_sale_result[0] if old_for_sale_result else None})")
+                except Exception as old_value_error:
+                    logger.warning(f"更新前のfor_sale値取得エラー: {str(old_value_error)}", exc_info=True)
+                    old_for_sale = False
+                
                 # 更新可能なフィールドを構築
                 update_fields = []
                 update_values = []
@@ -1055,10 +1071,17 @@ async def update_satei_property(
                                 'for_sale', 'evaluation_result']
                 
                 request_dict = request.dict(exclude_unset=True, exclude_none=False)
+                for_sale_updated = False
+                new_for_sale = None
+                
                 for field in allowed_fields:
                     if field in request_dict:
                         update_fields.append(f"{field} = %s")
                         update_values.append(request_dict[field])
+                        if field == 'for_sale':
+                            for_sale_updated = True
+                            new_for_sale = bool(request_dict[field]) if request_dict[field] is not None else False
+                            logger.info(f"for_sale更新: {old_for_sale} -> {new_for_sale}")
                 
                 if not update_fields:
                     raise HTTPException(status_code=400, detail="更新する項目がありません")
@@ -1073,6 +1096,133 @@ async def update_satei_property(
                 
                 await cursor.execute(query, tuple(update_values))
                 await conn.commit()
+                
+                # 販売希望がFalseからTrueに変更された場合、Slack通知を送信
+                logger.info(f"販売希望通知チェック: for_sale_updated={for_sale_updated}, new_for_sale={new_for_sale}, old_for_sale={old_for_sale}")
+                if for_sale_updated and new_for_sale is True and old_for_sale is False:
+                    logger.info(f"販売希望通知を送信します: property_id={property_id}")
+                    try:
+                        # 査定物件の情報を取得
+                        await cursor.execute("""
+                            SELECT sp.*, su.email, su.name as user_name, su.contact_id, su.owner_id, su.owner_name,
+                                   sp.company_name, sp.first_name, sp.last_name, sp.owner_user_id
+                            FROM satei_properties sp
+                            JOIN satei_users su ON sp.user_id = su.id
+                            WHERE sp.id = %s
+                        """, (property_id,))
+                        
+                        property_result = await cursor.fetchone()
+                        if not property_result:
+                            logger.warning(f"査定物件情報が見つかりません: property_id={property_id}")
+                        else:
+                            columns = [desc[0] for desc in cursor.description]
+                            property_dict = dict(zip(columns, property_result))
+                            logger.info(f"査定物件情報を取得しました: property_id={property_id}, company_name={property_dict.get('company_name')}, contact_id={property_dict.get('contact_id')}")
+                            
+                            # 統一されたWebhookURLを環境変数から取得
+                            slack_webhook_url = os.getenv('SLACK_WEBHOOK_SATEI', '')
+                            
+                            if not slack_webhook_url:
+                                logger.warning("SLACK_WEBHOOK_SATEI環境変数が設定されていません。販売希望のSlack通知をスキップします。")
+                            else:
+                                # 会社名を取得
+                                company_name_display = "未入力"
+                                company_name = property_dict.get('company_name')
+                                if company_name and str(company_name).strip():
+                                    company_name_display = str(company_name).strip()
+                                
+                                # 担当者のメンションを取得（コンタクト担当者）
+                                owner_mention = ""
+                                hubspot_owner_email = None
+                                
+                                # owner_user_idから担当者のメールアドレスを取得（usersテーブルのid）
+                                owner_user_id = property_dict.get('owner_user_id')
+                                if owner_user_id:
+                                    try:
+                                        await cursor.execute("""
+                                            SELECT email FROM users WHERE id = %s
+                                        """, (owner_user_id,))
+                                        owner_result = await cursor.fetchone()
+                                        if owner_result:
+                                            hubspot_owner_email = owner_result[0]
+                                            logger.info(f"担当者のメールアドレスを取得: {hubspot_owner_email}")
+                                    except Exception as owner_email_error:
+                                        logger.warning(f"担当者のメールアドレス取得エラー: {str(owner_email_error)}")
+                                
+                                if hubspot_owner_email:
+                                    try:
+                                        from config.slack import get_slack_config
+                                        slack_config = get_slack_config(hubspot_owner_email)
+                                        if slack_config['mention'] == 'here':
+                                            owner_mention = '<!here>'
+                                        else:
+                                            owner_mention = f"<@{slack_config['mention']}>"
+                                        logger.info(f"担当者のメンションを取得: {owner_mention}")
+                                    except Exception as mention_error:
+                                        logger.warning(f"担当者のメンション取得エラー: {str(mention_error)}")
+                                        owner_mention = ""
+                                
+                                # 必要な情報を取得
+                                hubspot_id = os.getenv('HUBSPOT_ID', '')
+                                mirai_base_url = os.getenv('MIRAI_BASE_URL', 'http://localhost:3000')
+                                
+                                # メンションを構築（3名）
+                                mentions = []
+                                
+                                # 1. 担当者（コンタクト担当者）
+                                if owner_mention:
+                                    mentions.append(owner_mention)
+                                
+                                # 2. 赤瀬さん（akase@miraiarc.jpのmention）
+                                mentions.append('<@U05FNC60W2V>')
+                                
+                                # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
+                                mentions.append('<!subteam^S09B4NN6TTJ>')
+                                
+                                # 通知内容を構築
+                                contact_id = property_dict.get('contact_id')
+                                contact_name = property_dict.get('user_name') or "不明"
+                                
+                                # HubSpotページURL
+                                hubspot_url = ""
+                                if hubspot_id and contact_id:
+                                    hubspot_url = f"https://app.hubspot.com/contacts/{hubspot_id}/contact/{contact_id}"
+                                else:
+                                    hubspot_url = "取得できませんでした"
+                                
+                                # 査定物件URL
+                                satei_url = f"{mirai_base_url}/admin/satei/detail/{property_id}"
+                                
+                                # メッセージを構築
+                                message_text = f"{' '.join(mentions)} 販売希望がありました\n\n"
+                                message_text += f"Hubspotページ：{hubspot_url}\n"
+                                message_text += f"会社名：{company_name_display}\n"
+                                message_text += f"コンタクト名：{contact_name}\n"
+                                message_text += f"査定物件URL：{satei_url}"
+                                
+                                message = {'text': message_text}
+                                
+                                # Slackに通知を送信（査定依頼時と同じ方法で実行）
+                                try:
+                                    logger.info(f"Slack通知を送信します: webhook_url={slack_webhook_url[:50]}..., message={message_text[:100]}...")
+                                    # Slackに送信（統一されたWebhookURLを使用）
+                                    slack_response = requests.post(
+                                        slack_webhook_url,
+                                        json=message,
+                                        timeout=10
+                                    )
+                                    
+                                    logger.info(f"Slackレスポンス: status_code={slack_response.status_code}, response_text={slack_response.text[:200]}")
+                                    
+                                    if slack_response.status_code == 200:
+                                        logger.info(f"販売希望のSlack通知を送信しました: property_id={property_id}")
+                                    else:
+                                        logger.warning(f"販売希望のSlack通知送信エラー: status_code={slack_response.status_code}, response={slack_response.text}")
+                                except Exception as request_error:
+                                    logger.error(f"販売希望のSlack通知送信リクエストエラー: {str(request_error)}", exc_info=True)
+                    except Exception as slack_error:
+                        logger.error(f"販売希望のSlack通知処理エラー: {str(slack_error)}", exc_info=True)
+                        # Slack通知のエラーは更新処理を失敗させない
         
         return {
             "status": "success",
@@ -1082,7 +1232,7 @@ async def update_satei_property(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"査定物件更新エラー: {str(e)}")
+        logger.error(f"査定物件更新エラー: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"査定物件の更新に失敗しました: {str(e)}"
