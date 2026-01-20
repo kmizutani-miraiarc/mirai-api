@@ -499,6 +499,106 @@ async def upload_satei_property(
         except Exception as slack_error:
             logger.error(f"Slack通知エラー: {str(slack_error)}", exc_info=True)
         
+        # 査定依頼者へ自動返信メールを送信
+        try:
+            # noreply@miraiarc.jpのユーザーIDを取得（送信元アカウントとして使用）
+            noreply_user_id = None
+            async with db_connection.get_connection() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                        SELECT id FROM users WHERE email = %s
+                    """, ('noreply@miraiarc.jp',))
+                    result = await cursor.fetchone()
+                    if result:
+                        noreply_user_id = result[0]
+                        logger.info(f"noreply@miraiarc.jpのユーザーIDを取得: {noreply_user_id}")
+                    else:
+                        logger.warning("noreply@miraiarc.jpのユーザーが見つかりません。自動返信メールをスキップします。")
+            
+            if noreply_user_id:
+                # Gmail APIサービスを取得（noreply@miraiarc.jpの認証情報を使用）
+                try:
+                    service, from_email = await get_gmail_service(noreply_user_id)
+                    logger.info(f"Gmail APIサービスを取得: from_email={from_email}")
+                    
+                    # マイページURLを環境変数から取得（ローカル/本番の判定）
+                    satei_mypage_base_url = os.getenv('SATEI_MYPAGE_BASE_URL', '')
+                    if not satei_mypage_base_url:
+                        # 環境変数が設定されていない場合は、MIRAI_BASE_URLから判定
+                        mirai_base_url = os.getenv('MIRAI_BASE_URL', 'http://localhost:3000')
+                        if 'localhost' in mirai_base_url or '127.0.0.1' in mirai_base_url:
+                            satei_mypage_base_url = 'http://localhost:8081'
+                        else:
+                            satei_mypage_base_url = 'https://miraiarc.co.jp'
+                    
+                    # マイページURLを構築
+                    mypage_url = f"{satei_mypage_base_url}/satei-mypage/?user={unique_id}"
+                    
+                    # メール件名
+                    subject = "買取査定依頼を受け付けました。"
+                    
+                    # メール本文
+                    body = f"""買取査定依頼ありがとうございます。
+査定結果については以下URLより、ご確認いただけます。
+{mypage_url}
+
+査定完了時に担当者よりメールにてお知らせいたします。
+
+※このメールは送信専用アドレス（noreply@miraiarc.jp）から送信されています。"""
+                    
+                    # メールメッセージを作成
+                    msg = MIMEMultipart('alternative')
+                    # 送信者をinfo@miraiarc.jpに設定（受信者に表示される送信者）
+                    # 実際の送信元アカウントはnoreply@miraiarc.jpだが、Fromヘッダーでinfo@miraiarc.jpとして表示
+                    msg['From'] = 'noreply@miraiarc.jp'
+                    # 返信先をinfo@miraiarc.jpに設定（返信はinfo@miraiarc.jpに届くように）
+                    msg['Reply-To'] = 'noreply@miraiarc.jp'
+                    msg['To'] = email
+                    msg['Subject'] = subject
+                    
+                    # BCCを追加（環境変数から取得）
+                    bcc_address = os.getenv('GMAIL_BCC_ADDRESS', '').strip()
+                    if bcc_address:
+                        msg['Bcc'] = bcc_address
+                        logger.info(f"BCCアドレスを追加しました: {bcc_address}")
+                    
+                    # 本文を追加（HTML形式）
+                    html_body = body.replace('\n', '<br>')
+                    html_part = MIMEText(html_body, 'html', 'utf-8')
+                    msg.attach(html_part)
+                    
+                    # テキスト形式も追加
+                    text_part = MIMEText(body, 'plain', 'utf-8')
+                    msg.attach(text_part)
+                    
+                    # Base64エンコード
+                    raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
+                    
+                    # Gmail APIでメールを送信
+                    try:
+                        message = {'raw': raw_message}
+                        send_result = service.users().messages().send(
+                            userId='me',
+                            body=message
+                        ).execute()
+                        
+                        logger.info(f"査定依頼自動返信メールを送信しました: {email}, 件名: {subject}, message_id: {send_result.get('id')}")
+                    except HttpError as e:
+                        error_detail = e.error_details[0] if e.error_details else {}
+                        error_message = error_detail.get('message', str(e))
+                        logger.error(f"査定依頼自動返信メール送信エラー（Gmail API）: {error_message}")
+                    except Exception as e:
+                        logger.error(f"査定依頼自動返信メール送信エラー: {str(e)}", exc_info=True)
+                except ValueError as e:
+                    logger.warning(f"Gmail APIサービス取得エラー: {str(e)}。自動返信メールをスキップします。")
+                except Exception as e:
+                    logger.error(f"査定依頼自動返信メール処理エラー: {str(e)}", exc_info=True)
+            else:
+                logger.warning("noreply@miraiarc.jpのユーザーIDが取得できませんでした。自動返信メールをスキップします。")
+        except Exception as email_error:
+            logger.error(f"査定依頼自動返信メール処理エラー: {str(email_error)}", exc_info=True)
+            # メール送信エラーは査定依頼処理を失敗させない
+        
         return {
             "status": "success",
             "message": "査定物件を正常に登録しました",
