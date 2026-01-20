@@ -417,6 +417,14 @@ async def upload_satei_property(
             if not slack_webhook_url:
                 logger.warning("SLACK_WEBHOOK_SATEI環境変数が設定されていません。Slack通知をスキップします。")
             else:
+                # 会社名を決定（フォーム入力値を使用、空文字列の場合は「未入力」）
+                company_name_display = "未入力"
+                if companyName and companyName.strip():
+                    company_name_display = companyName.strip()
+                    logger.info(f"フォームから会社名を取得: {company_name_display}")
+                else:
+                    logger.info(f"フォームから会社名が取得できませんでした: companyName={companyName}")
+                
                 # 担当者のメンションを取得（コンタクト担当者）
                 owner_mention = ""
                 if hubspot_owner_email:
@@ -454,7 +462,6 @@ async def upload_satei_property(
                 # 通知内容を構築
                 contact_id = contact_info.get("contact_id") if contact_info else None
                 contact_name = contact_info.get("name") if contact_info else "不明"
-                company_name_display = companyName or "未入力"
                 
                 # HubSpotページURL
                 hubspot_url = ""
