@@ -93,12 +93,13 @@ async def get_profit_report(
 @router.get("/purchase-summary", summary="仕入集計レポート取得（バッチ処理版）")
 async def get_purchase_summary_report(
     year: int = Query(..., description="集計年"),
+    is_appraisal_only: bool = Query(False, description="査定物件のみフラグ"),
     service: PurchaseSummaryService = Depends(get_purchase_summary_service),
     api_key_info=Depends(verify_api_key)
 ):
     """仕入集計レポートを取得します（バッチ処理で集計されたデータを取得）"""
     try:
-        return await service.get_latest_summary(year)
+        return await service.get_latest_summary(year, is_appraisal_only)
     except Exception as e:
         logger.error(f"仕入集計レポート取得エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"仕入集計レポートの取得に失敗しました: {str(e)}")
@@ -141,14 +142,32 @@ async def get_purchase_summary_deal_details(
     owner_id: str = Query(..., description="担当者ID（totalの場合は全担当者）"),
     year_month: str = Query(..., description="年月（YYYY-MM形式）"),
     stage_name: str = Query(..., description="ステージ名または当月系項目名"),
+    is_appraisal_only: bool = Query(False, description="査定物件のみフラグ"),
     service: PurchaseSummaryService = Depends(get_purchase_summary_service),
     api_key_info=Depends(verify_api_key)
 ):
     """仕入集計レポートの取引詳細を取得します（バッチ処理で集計されたデータから、会社名・コンタクト名を含む）"""
     try:
-        return await service.get_deal_details(year, owner_id, year_month, stage_name)
+        return await service.get_deal_details(year, owner_id, year_month, stage_name, is_appraisal_only)
     except Exception as e:
         logger.error(f"仕入集計レポート取引詳細取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"取引詳細の取得に失敗しました: {str(e)}")
+
+
+@router.get("/sales-summary/deal-details", summary="販売集計レポート取引詳細取得")
+async def get_sales_summary_deal_details(
+    year: int = Query(..., description="集計年"),
+    owner_id: str = Query(..., description="担当者ID（totalの場合は全担当者）"),
+    year_month: str = Query(..., description="年月（YYYY-MM形式）"),
+    stage_name: str = Query(..., description="ステージ名または当月系項目名"),
+    service: SalesSummaryService = Depends(get_sales_summary_service),
+    api_key_info=Depends(verify_api_key)
+):
+    """販売集計レポートの取引詳細を取得します（バッチ処理で集計されたデータから、会社名・コンタクト名を含む）"""
+    try:
+        return await service.get_deal_details(year, owner_id, year_month, stage_name)
+    except Exception as e:
+        logger.error(f"販売集計レポート取引詳細取得エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"取引詳細の取得に失敗しました: {str(e)}")
 
 

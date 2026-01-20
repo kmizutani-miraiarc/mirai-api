@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 import aiomysql
@@ -14,11 +15,11 @@ class PurchaseSummaryService:
     def __init__(self, db_pool: aiomysql.Pool):
         self.db_pool = db_pool
 
-    async def get_latest_summary(self, year: int) -> Dict[str, Any]:
+    async def get_latest_summary(self, year: int, is_appraisal_only: bool = False) -> Dict[str, Any]:
         """最新の集計データを取得"""
         async with self.db_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
-                # 指定年の集計データを取得
+                # 指定年の集計データを取得（is_appraisal_onlyでフィルタリング）
                 query = """
                     SELECT 
                         owner_id,
@@ -29,9 +30,10 @@ class PurchaseSummaryService:
                         monthly_data
                     FROM purchase_summary
                     WHERE aggregation_year = %s
+                      AND is_appraisal_only = %s
                     ORDER BY owner_id, month
                 """
-                await cursor.execute(query, (year,))
+                await cursor.execute(query, (year, is_appraisal_only))
                 results = await cursor.fetchall()
                 
                 if not results:
@@ -311,7 +313,8 @@ class PurchaseSummaryService:
         year: int,
         owner_id: str,
         year_month: str,
-        stage_name: str
+        stage_name: str,
+        is_appraisal_only: bool = False
     ) -> Dict[str, Any]:
         """指定した条件の取引詳細を取得（バッチ処理で保存されたデータから）"""
         async with self.db_pool.acquire() as conn:
@@ -320,14 +323,16 @@ class PurchaseSummaryService:
                 month = int(year_month.split('-')[1])
                 
                 # owner_idが'total'の場合は全担当者のデータを取得
+                # is_appraisal_onlyで査定物件のみのデータをフィルタリング
                 if owner_id == 'total':
                     query = """
                         SELECT owner_id, monthly_data
                         FROM purchase_summary
                         WHERE aggregation_year = %s
                           AND month = %s
+                          AND is_appraisal_only = %s
                     """
-                    await cursor.execute(query, (year, month))
+                    await cursor.execute(query, (year, month, is_appraisal_only))
                     results = await cursor.fetchall()
                 else:
                     query = """
@@ -336,8 +341,9 @@ class PurchaseSummaryService:
                         WHERE aggregation_year = %s
                           AND owner_id = %s
                           AND month = %s
+                          AND is_appraisal_only = %s
                     """
-                    await cursor.execute(query, (year, owner_id, month))
+                    await cursor.execute(query, (year, owner_id, month, is_appraisal_only))
                     result = await cursor.fetchone()
                     results = [result] if result else []
                 
@@ -348,6 +354,7 @@ class PurchaseSummaryService:
                 
                 # 全担当者のデータをマージ
                 all_deal_details = []
+                all_deal_ids = []  # 取引IDリストも収集
                 for result in results:
                     if not result or not result.get('monthly_data'):
                         continue
@@ -356,6 +363,19 @@ class PurchaseSummaryService:
                     monthly_data_str = result['monthly_data']
                     try:
                         monthly_data = json.loads(monthly_data_str)
+                        
+                        # ステージ別または当月系項目別の取引IDリストを取得（件数確認用）
+                        deal_ids = []
+                        if 'deal_ids_by_stage' in monthly_data and stage_name in monthly_data['deal_ids_by_stage']:
+                            deal_ids = monthly_data['deal_ids_by_stage'][stage_name]
+                        elif 'deal_ids_by_monthly_item' in monthly_data and stage_name in monthly_data['deal_ids_by_monthly_item']:
+                            deal_ids = monthly_data['deal_ids_by_monthly_item'][stage_name]
+                        
+                        if isinstance(deal_ids, list):
+                            # 取引IDリストをマージ（重複除去）
+                            for deal_id in deal_ids:
+                                if deal_id and deal_id not in all_deal_ids:
+                                    all_deal_ids.append(deal_id)
                         
                         # ステージ別または当月系項目別の取引詳細を取得
                         deal_details = []
@@ -379,6 +399,38 @@ class PurchaseSummaryService:
                     except (json.JSONDecodeError, TypeError) as e:
                         logger.error(f"月別データのパースエラー: {str(e)}")
                         continue
+                
+                # 取引IDリストの件数と取引詳細の件数を比較
+                deal_ids_count = len(all_deal_ids)
+                deal_details_count = len(all_deal_details)
+                
+                if deal_ids_count != deal_details_count:
+                    logger.warning(
+                        f"取引IDリストの件数と取引詳細の件数が一致しません: "
+                        f"取引ID数={deal_ids_count}, 取引詳細数={deal_details_count}, "
+                        f"year={year}, owner_id={owner_id}, year_month={year_month}, stage_name={stage_name}"
+                    )
+                    
+                    # 取引IDリストに含まれているが、取引詳細が取得できなかった取引を補完
+                    existing_detail_ids = {d.get('id') for d in all_deal_details}
+                    missing_deal_ids = [deal_id for deal_id in all_deal_ids if deal_id not in existing_detail_ids]
+                    
+                    # 不足している取引について、基本的な情報のみの取引詳細を作成
+                    for missing_deal_id in missing_deal_ids:
+                        all_deal_details.append({
+                            "id": missing_deal_id,
+                            "name": "取引詳細取得失敗",
+                            "amount": 0,
+                            "stage": "",
+                            "owner": "",
+                            "company_name": "-",
+                            "contact_name": "-",
+                            "createdDate": "",
+                            "appraisal_property": False,
+                            "hubspot_link": f"https://app.hubspot.com/contacts/{os.getenv('HUBSPOT_ID', '')}/record/0-3/{missing_deal_id}/" if os.getenv('HUBSPOT_ID') else ""
+                        })
+                    
+                    logger.info(f"不足している取引詳細を補完しました: {len(missing_deal_ids)}件")
                 
                 return {
                     "deals": all_deal_details

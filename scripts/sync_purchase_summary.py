@@ -119,26 +119,53 @@ class PurchaseSummarySync:
             from_date = datetime(last_year, 1, 1)
             to_date = datetime(current_year, 12, 31, 23, 59, 59)
             
-            # 集計データを計算（2年分を一度に処理、非表示担当者を除外した取引データを使用）
-            summary_data = await self._aggregate_summary(filtered_deals, from_date, to_date)
+            # 全取引の集計データを計算（2年分を一度に処理、非表示担当者を除外した取引データを使用）
+            summary_data_all = await self._aggregate_summary(filtered_deals, from_date, to_date)
             
-            # デバッグ: 集計結果のサマリーをログ出力
+            # デバッグ: 全取引の集計結果のサマリーをログ出力
             total_deals_count = 0
-            for owner_id, owner_data in summary_data.items():
+            for owner_id, owner_data in summary_data_all.items():
                 for year_month, month_data in owner_data.get('monthly_data', {}).items():
                     total_deals_count += month_data.get('total_deals', 0)
-            logger.info(f"集計結果サマリー: 担当者数={len([k for k in summary_data.keys() if k not in ['_ownerOrder', '_totalSummary']])}, 総取引数={total_deals_count}")
+            logger.info(f"全取引の集計結果サマリー: 担当者数={len([k for k in summary_data_all.keys() if k not in ['_ownerOrder', '_totalSummary']])}, 総取引数={total_deals_count}")
             
-            # 取引詳細を取得して保存（エラーが発生してもバッチ処理は続行）
+            # 査定物件のみの取引をフィルタリング
+            appraisal_only_deals = []
+            for deal in filtered_deals:
+                properties = deal.get("properties", {})
+                appraisal_property = properties.get("appraisal_property")
+                # appraisal_propertyが'true'の場合は査定物件
+                if appraisal_property == 'true' or appraisal_property == True:
+                    appraisal_only_deals.append(deal)
+            
+            logger.info(f"査定物件のみの取引数: {len(appraisal_only_deals)}件（全取引: {len(filtered_deals)}件）")
+            
+            # 査定物件のみの集計データを計算
+            summary_data_appraisal_only = await self._aggregate_summary(appraisal_only_deals, from_date, to_date)
+            
+            # デバッグ: 査定物件のみの集計結果のサマリーをログ出力
+            appraisal_deals_count = 0
+            for owner_id, owner_data in summary_data_appraisal_only.items():
+                for year_month, month_data in owner_data.get('monthly_data', {}).items():
+                    appraisal_deals_count += month_data.get('total_deals', 0)
+            logger.info(f"査定物件のみの集計結果サマリー: 担当者数={len([k for k in summary_data_appraisal_only.keys() if k not in ['_ownerOrder', '_totalSummary']])}, 総取引数={appraisal_deals_count}")
+            
+            # 取引詳細を取得して保存（全取引と査定物件のみの両方、エラーが発生してもバッチ処理は続行）
             try:
-                await self._update_deal_details(summary_data, filtered_deals)
+                await self._update_deal_details(summary_data_all, filtered_deals)
+                await self._update_deal_details(summary_data_appraisal_only, appraisal_only_deals)
             except Exception as e:
                 logger.error(f"取引詳細の取得中にエラーが発生しましたが、バッチ処理は続行します: {str(e)}", exc_info=True)
             
-            # 去年と今年のデータを分けて保存
+            # 去年と今年のデータを分けて保存（全取引と査定物件のみの両方）
             for year in [last_year, current_year]:
-                year_summary_data = self._filter_by_year(summary_data, year)
-                await self._save_to_database(year, year_summary_data)
+                # 全取引のデータを保存
+                year_summary_data_all = self._filter_by_year(summary_data_all, year)
+                await self._save_to_database(year, year_summary_data_all, is_appraisal_only=False)
+                
+                # 査定物件のみのデータを保存
+                year_summary_data_appraisal_only = self._filter_by_year(summary_data_appraisal_only, year)
+                await self._save_to_database(year, year_summary_data_appraisal_only, is_appraisal_only=True)
             
             logger.info(f"仕入集計レポート集計が完了しました。")
         except Exception as e:
@@ -152,20 +179,32 @@ class PurchaseSummarySync:
         """担当者情報をキャッシュに読み込む"""
         try:
             owners = await self.owners_client.get_owners()
+            archived_count = 0
             for owner in owners:
                 owner_id = owner.get("id")
-                if owner_id:
-                    last_name = owner.get("lastName", "").strip()
-                    first_name = owner.get("firstName", "").strip()
-                    if last_name and first_name:
-                        owner_name = f"{last_name} {first_name}"
-                    elif last_name:
-                        owner_name = last_name
-                    elif first_name:
-                        owner_name = first_name
-                    else:
-                        owner_name = owner.get("email", "")
-                    self.owners_cache[owner_id] = owner_name
+                if not owner_id:
+                    continue
+                
+                # 無効（アーカイブ済み）な担当者を除外
+                if owner.get("archived", False):
+                    archived_count += 1
+                    logger.debug(f"無効な担当者を除外: {owner_id} (archived=true)")
+                    continue
+                
+                last_name = owner.get("lastName", "").strip()
+                first_name = owner.get("firstName", "").strip()
+                if last_name and first_name:
+                    owner_name = f"{last_name} {first_name}"
+                elif last_name:
+                    owner_name = last_name
+                elif first_name:
+                    owner_name = first_name
+                else:
+                    owner_name = owner.get("email", "")
+                self.owners_cache[owner_id] = owner_name
+            
+            if archived_count > 0:
+                logger.info(f"無効な担当者を除外しました: {archived_count}件")
         except Exception as e:
             logger.warning(f"担当者情報の読み込みに失敗しました: {str(e)}")
 
@@ -316,6 +355,7 @@ class PurchaseSummarySync:
                     continue
             
             # 日付範囲でフィルタリング（リアルタイム集計と同じ）
+            # 元のリアルタイム集計では >= と <= を使用しているため、それに合わせる
             if deal_date < from_date or deal_date > to_date:
                 continue
             
@@ -364,6 +404,13 @@ class PurchaseSummarySync:
             if deal_id and stage_name in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']:
                 if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage'][stage_name]:
                     summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage'][stage_name].append(deal_id)
+            
+            # 「全体」（登録数）の取引IDを保存
+            if deal_id:
+                if '全体' not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']:
+                    summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['全体'] = []
+                if deal_id not in summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['全体']:
+                    summary_data[owner_id]['monthly_data'][year_month]['deal_ids_by_stage']['全体'].append(deal_id)
             
             # 該当/非該当物件の取引IDを保存
             if deal_id:
@@ -622,8 +669,8 @@ class PurchaseSummarySync:
             logger.info("取引詳細更新対象の取引がありません")
             return
         
-        # 並列処理で取引詳細を取得（1件ずつ、レート制限を考慮）
-        semaphore = asyncio.Semaphore(1)
+        # 並列処理で取引詳細を取得（3件ずつ、レート制限を考慮）
+        semaphore = asyncio.Semaphore(3)
         deal_details_map = {}
         processed_count = 0
         total_count = len(all_deal_ids)
@@ -808,15 +855,16 @@ class PurchaseSummarySync:
     async def _save_to_database(
         self,
         year: int,
-        summary_data: Dict[str, Dict[str, Any]]
+        summary_data: Dict[str, Dict[str, Any]],
+        is_appraisal_only: bool = False
     ):
         """データベースに保存"""
         async with self.db_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
                 insert_query = """
                     INSERT INTO purchase_summary
-                    (aggregation_year, owner_id, owner_name, month, total_deals, stage_breakdown, monthly_data)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s) AS new
+                    (aggregation_year, owner_id, owner_name, month, is_appraisal_only, total_deals, stage_breakdown, monthly_data)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                         total_deals = new.total_deals,
                         stage_breakdown = new.stage_breakdown,
@@ -838,6 +886,7 @@ class PurchaseSummarySync:
                                 owner_id,
                                 owner_name,
                                 month,
+                                is_appraisal_only,
                                 month_data['total_deals'],
                                 stage_breakdown_json,
                                 monthly_data_json
