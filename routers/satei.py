@@ -409,25 +409,76 @@ async def upload_satei_property(
                     logger.error(f"ロールバック中にエラーが発生しました: {str(rollback_error)}")
             raise
         
-        # コンタクト担当者にSlack通知を送信
-        logger.info(f"Slack通知チェック: hubspot_owner_email={hubspot_owner_email}")
-        if hubspot_owner_email:
-            try:
-                from config.slack import get_slack_config
-                logger.info(f"Slack設定を取得中: email={hubspot_owner_email}")
-                slack_config = get_slack_config(hubspot_owner_email)
-                logger.info(f"Slack設定取得成功: webhook_url={slack_config.get('webhook_url', 'N/A')[:50]}..., mention={slack_config.get('mention', 'N/A')}")
-                
-                # メンション付きメッセージを構築
-                if slack_config['mention'] == 'here':
-                    message = {'text': '<!here> 査定依頼がありました'}
+        # 査定依頼受信時にSlack通知を送信（物件査定依頼チャンネルに統一）
+        try:
+            # 統一されたWebhookURLを環境変数から取得
+            slack_webhook_url = os.getenv('SLACK_WEBHOOK_SATEI', '')
+            
+            if not slack_webhook_url:
+                logger.warning("SLACK_WEBHOOK_SATEI環境変数が設定されていません。Slack通知をスキップします。")
+            else:
+                # 担当者のメンションを取得（コンタクト担当者）
+                owner_mention = ""
+                if hubspot_owner_email:
+                    try:
+                        from config.slack import get_slack_config
+                        slack_config = get_slack_config(hubspot_owner_email)
+                        if slack_config['mention'] == 'here':
+                            owner_mention = '<!here>'
+                        else:
+                            owner_mention = f"<@{slack_config['mention']}>"
+                        logger.info(f"担当者のメンションを取得: {owner_mention}")
+                    except Exception as mention_error:
+                        logger.warning(f"担当者のメンション取得エラー: {str(mention_error)}")
+                        owner_mention = ""
                 else:
-                    message = {'text': f"<@{slack_config['mention']}> 査定依頼がありました"}
+                    logger.info("hubspot_owner_emailが取得できませんでした。担当者のメンションはスキップします。")
                 
-                logger.info(f"Slackメッセージ送信中: message={message}")
-                # Slackに送信
+                # 必要な情報を取得
+                hubspot_id = os.getenv('HUBSPOT_ID', '')
+                mirai_base_url = os.getenv('MIRAI_BASE_URL', 'http://localhost:3000')
+                
+                # メンションを構築（3名）
+                mentions = []
+                
+                # 1. 担当者（コンタクト担当者）
+                if owner_mention:
+                    mentions.append(owner_mention)
+                
+                # 2. 赤瀬さん（akase@miraiarc.jpのmention）
+                mentions.append('<@U05FNC60W2V>')
+                
+                # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
+                mentions.append('<!subteam^S09B4NN6TTJ>')
+                
+                # 通知内容を構築
+                contact_id = contact_info.get("contact_id") if contact_info else None
+                contact_name = contact_info.get("name") if contact_info else "不明"
+                company_name_display = companyName or "未入力"
+                
+                # HubSpotページURL
+                hubspot_url = ""
+                if hubspot_id and contact_id:
+                    hubspot_url = f"https://app.hubspot.com/contacts/{hubspot_id}/contact/{contact_id}"
+                else:
+                    hubspot_url = "取得できませんでした"
+                
+                # 査定物件URL
+                satei_url = f"{mirai_base_url}/admin/satei/detail/{satei_property_id}"
+                
+                # メッセージを構築
+                message_text = f"{' '.join(mentions)} 査定依頼がありました\n\n"
+                message_text += f"Hubspotページ：{hubspot_url}\n"
+                message_text += f"会社名：{company_name_display}\n"
+                message_text += f"コンタクト名：{contact_name}\n"
+                message_text += f"査定物件URL：{satei_url}"
+                
+                message = {'text': message_text}
+                
+                logger.info(f"Slackメッセージ送信中: webhook_url={slack_webhook_url[:50]}..., message={message}")
+                # Slackに送信（統一されたWebhookURLを使用）
                 response = requests.post(
-                    slack_config['webhook_url'],
+                    slack_webhook_url,
                     json=message,
                     timeout=10
                 )
@@ -435,13 +486,11 @@ async def upload_satei_property(
                 logger.info(f"Slackレスポンス: status_code={response.status_code}, response_text={response.text[:200]}")
                 
                 if response.status_code == 200:
-                    logger.info(f"担当者({hubspot_owner_email})にSlack通知を送信しました")
+                    logger.info("物件査定依頼チャンネルにSlack通知を送信しました")
                 else:
                     logger.error(f"Slack通知送信失敗: status_code={response.status_code}, response_text={response.text}")
-            except Exception as slack_error:
-                logger.error(f"Slack通知エラー: {str(slack_error)}", exc_info=True)
-        else:
-            logger.warning(f"Slack通知をスキップ: hubspot_owner_emailがNoneです（担当者が見つからないか、取得に失敗しました）")
+        except Exception as slack_error:
+            logger.error(f"Slack通知エラー: {str(slack_error)}", exc_info=True)
         
         return {
             "status": "success",
