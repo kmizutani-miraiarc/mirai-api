@@ -611,15 +611,17 @@ async def get_satei_users(
 @router.get("/satei/users/{unique_id}/properties")
 async def get_user_properties_by_unique_id(
     unique_id: str,
+    limit: int = 100,
+    offset: int = 0,
     api_key: dict = Depends(verify_api_key)
 ):
-    """指定ユーザーの査定物件一覧を取得"""
+    """指定ユーザーの査定物件一覧を取得（ページネーション対応）"""
     try:
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
                 # ユーザーIDを取得
                 await cursor.execute("""
-                    SELECT id FROM satei_users WHERE unique_id = %s
+                    SELECT id, name, email FROM satei_users WHERE unique_id = %s
                 """, (unique_id,))
                 
                 user_result = await cursor.fetchone()
@@ -627,6 +629,18 @@ async def get_user_properties_by_unique_id(
                     raise HTTPException(status_code=404, detail="指定されたユーザーが見つかりません")
                 
                 user_id = user_result[0]
+                user_name = user_result[1] if user_result[1] else ""
+                user_email = user_result[2] if user_result[2] else ""
+                
+                # 総件数を取得
+                await cursor.execute("""
+                    SELECT COUNT(*) as total
+                    FROM satei_properties sp
+                    WHERE sp.user_id = %s
+                """, (user_id,))
+                
+                total_result = await cursor.fetchone()
+                total = total_result[0] if total_result else 0
                 
                 # 査定物件を取得（フォーム入力の氏名はsatei_propertiesから取得）
                 await cursor.execute("""
@@ -635,7 +649,8 @@ async def get_user_properties_by_unique_id(
                     JOIN satei_users su ON sp.user_id = su.id
                     WHERE sp.user_id = %s
                     ORDER BY sp.created_at DESC
-                """, (user_id,))
+                    LIMIT %s OFFSET %s
+                """, (user_id, limit, offset))
                 
                 properties = await cursor.fetchall()
                 
@@ -680,7 +695,16 @@ async def get_user_properties_by_unique_id(
         return {
             "status": "success",
             "data": {
-                "properties": properties_dict
+                "properties": properties_dict,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "user": {
+                    "id": user_id,
+                    "name": user_name,
+                    "email": user_email,
+                    "unique_id": unique_id
+                }
             }
         }
     except HTTPException:
