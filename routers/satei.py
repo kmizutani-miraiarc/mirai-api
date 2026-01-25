@@ -500,6 +500,8 @@ async def upload_satei_property(
             logger.error(f"Slack通知エラー: {str(slack_error)}", exc_info=True)
         
         # 査定依頼者へ自動返信メールを送信
+        email_sent_successfully = False
+        is_email_invalid = False
         try:
             # noreply@miraiarc.jpのユーザーIDを取得（送信元アカウントとして使用）
             noreply_user_id = None
@@ -650,13 +652,64 @@ async def upload_satei_property(
                             body=message
                         ).execute()
                         
+                        email_sent_successfully = True
                         logger.info(f"査定依頼自動返信メールを送信しました: {email}, 件名: {subject}, message_id: {send_result.get('id')}")
                     except HttpError as e:
                         error_detail = e.error_details[0] if e.error_details else {}
                         error_message = error_detail.get('message', str(e))
-                        logger.error(f"査定依頼自動返信メール送信エラー（Gmail API）: {error_message}")
+                        error_code = e.resp.status if hasattr(e, 'resp') else None
+                        
+                        # メール未達エラーを判定（一般的なメール未達エラーコード）
+                        # Gmail APIのエラーメッセージに含まれる可能性のあるキーワード
+                        invalid_email_keywords = [
+                            'invalid', 'not found', 'does not exist', 'unavailable',
+                            'bounce', 'rejected', 'undeliverable', 'delivery failed',
+                            '550', '551', '552', '553', '554', 'mailbox', 'address'
+                        ]
+                        
+                        error_message_lower = error_message.lower()
+                        if any(keyword in error_message_lower for keyword in invalid_email_keywords):
+                            is_email_invalid = True
+                            logger.warning(f"メールアドレスが無効の可能性: {email}, エラー: {error_message}")
+                        else:
+                            logger.error(f"査定依頼自動返信メール送信エラー（Gmail API）: {error_message}")
                     except Exception as e:
-                        logger.error(f"査定依頼自動返信メール送信エラー: {str(e)}", exc_info=True)
+                        error_message = str(e).lower()
+                        # メール未達エラーを判定
+                        invalid_email_keywords = [
+                            'invalid', 'not found', 'does not exist', 'unavailable',
+                            'bounce', 'rejected', 'undeliverable', 'delivery failed'
+                        ]
+                        if any(keyword in error_message for keyword in invalid_email_keywords):
+                            is_email_invalid = True
+                            logger.warning(f"メールアドレスが無効の可能性: {email}, エラー: {str(e)}")
+                        else:
+                            logger.error(f"査定依頼自動返信メール送信エラー: {str(e)}", exc_info=True)
+                    
+                    # メール送信結果に基づいてフラグを更新（user_idを使用）
+                    try:
+                        async with db_connection.get_connection() as conn:
+                            async with conn.cursor() as cursor:
+                                if email_sent_successfully:
+                                    # 送信成功時はフラグをfalseに設定
+                                    await cursor.execute("""
+                                        UPDATE satei_users 
+                                        SET is_email_invalid = FALSE 
+                                        WHERE id = %s
+                                    """, (user_id,))
+                                    logger.info(f"メール送信成功: user_id={user_id}, email={email} のis_email_invalidフラグをFALSEに設定しました")
+                                elif is_email_invalid:
+                                    # メール未達エラーの場合はフラグをtrueに設定
+                                    await cursor.execute("""
+                                        UPDATE satei_users 
+                                        SET is_email_invalid = TRUE 
+                                        WHERE id = %s
+                                    """, (user_id,))
+                                    logger.warning(f"メール未達エラー: user_id={user_id}, email={email} のis_email_invalidフラグをTRUEに設定しました")
+                                await conn.commit()
+                    except Exception as flag_error:
+                        logger.error(f"メール無効フラグ更新エラー: {str(flag_error)}", exc_info=True)
+                        # フラグ更新エラーはメール送信処理を失敗させない
                 except ValueError as e:
                     logger.warning(f"Gmail APIサービス取得エラー: {str(e)}。自動返信メールをスキップします。")
                 except Exception as e:
@@ -812,7 +865,7 @@ async def get_user_properties_by_unique_id(
                 
                 # 査定物件を取得（フォーム入力の氏名はsatei_propertiesから取得）
                 await cursor.execute("""
-                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, su.is_email_invalid
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     WHERE sp.user_id = %s
@@ -1000,7 +1053,7 @@ async def get_satei_properties(
                 total = total_result[0] if total_result else 0
                 
                 query = f"""
-                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, su.is_email_invalid
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     {where_clause}
@@ -1076,7 +1129,7 @@ async def get_satei_property(
             async with conn.cursor() as cursor:
                 await cursor.execute("""
                     SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, 
-                           su.contact_id, su.owner_id, su.owner_name
+                           su.contact_id, su.owner_id, su.owner_name, su.is_email_invalid
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     WHERE sp.id = %s
