@@ -534,17 +534,86 @@ async def upload_satei_property(
                     # マイページURLを構築
                     mypage_url = f"{satei_mypage_base_url}/satei-mypage/?user={unique_id}"
                     
-                    # メール件名
-                    subject = "買取査定依頼を受け付けました。"
+                    # WordPressのお問い合わせページURL
+                    contact_url = f"{satei_mypage_base_url}/contact/"
                     
-                    # メール本文
-                    body = f"""買取査定依頼ありがとうございます。
-査定結果については以下URLより、ご確認いただけます。
+                    # フォーム入力値を取得（表示用）
+                    company_name_display = companyName if companyName and companyName.strip() else "未入力"
+                    first_name_display = firstName if firstName and firstName.strip() else "未入力"
+                    last_name_display = lastName if lastName and lastName.strip() else "未入力"
+                    full_name_display = f"{last_name_display} {first_name_display}".strip() if (lastName or firstName) else "未入力"
+                    comment_display = comment if comment and comment.strip() else "未入力"
+                    
+                    # メール件名
+                    subject = "【MiraiArc】買取査定依頼を受け付けました"
+                    
+                    # テキスト形式のメール本文
+                    text_body = f"""買取査定依頼ありがとうございます。
+以下内容にて買取査定依頼を承りました。
+・会社名：{company_name_display}
+・氏名：{full_name_display}
+・メールアドレス：{email}
+・内容：{comment_display}
+
+これより、頂戴した内容を参考に査定を開始させていただきます。
+
+＜査定について＞
+査定につきましては、最短即日にて対応させていただきます。
+なお、ご提供いただきました情報によっては、査定にお時間を要する場合や、
+査定そのものが難しい場合もございますので、予めご了承いただけますと幸いです。
+
+査定結果につきましてはメール、ならびに専用マイページよりお知らせ致します。
+
+＜専用マイページについて＞
+お客様専用のマイページを発行させていただきました。
 {mypage_url}
+マイページでは、
+・査定結果の確認
+・査定結果から実際の売却依頼
+・追加の査定依頼
+などを行っていただくことが可能です。
+上記のURLよりいつでもご確認いただけますので、ブックマーク等をお願い致します。
+なお、こちらのURLは外部の方には共有しないよう、ご注意くださいませ。
 
-査定完了時に担当者よりメールにてお知らせいたします。
 
-※このメールは送信専用アドレス（noreply@miraiarc.jp）から送信されています。"""
+それでは、査定結果まで今しばらくお待ち下さいませ。
+
+※本メールアドレスは送信専用のため、ご返信いただけません。
+※ご意見・ご要望は、{contact_url} よりお問い合わせください。"""
+                    
+                    # HTML形式のメール本文（リンクをHTMLタグで表示）
+                    html_body = f"""買取査定依頼ありがとうございます。<br>
+以下内容にて買取査定依頼を承りました。<br>
+・会社名：{company_name_display}<br>
+・氏名：{full_name_display}<br>
+・メールアドレス：{email}<br>
+・内容：{comment_display}<br>
+<br>
+これより、頂戴した内容を参考に査定を開始させていただきます。<br>
+<br>
+＜査定について＞<br>
+査定につきましては、最短即日にて対応させていただきます。<br>
+なお、ご提供いただきました情報によっては、査定にお時間を要する場合や、<br>
+査定そのものが難しい場合もございますので、予めご了承いただけますと幸いです。<br>
+<br>
+査定結果につきましてはメール、ならびに専用マイページよりお知らせ致します。<br>
+<br>
+＜専用マイページについて＞<br>
+お客様専用のマイページを発行させていただきました。<br>
+<a href="{mypage_url}">{mypage_url}</a><br>
+マイページでは、<br>
+・査定結果の確認<br>
+・査定結果から実際の売却依頼<br>
+・追加の査定依頼<br>
+などを行っていただくことが可能です。<br>
+上記のURLよりいつでもご確認いただけますので、ブックマーク等をお願い致します。<br>
+なお、こちらのURLは外部の方には共有しないよう、ご注意くださいませ。<br>
+<br>
+<br>
+それでは、査定結果まで今しばらくお待ち下さいませ。<br>
+<br>
+※本メールアドレスは送信専用のため、ご返信いただけません。<br>
+※ご意見・ご要望は、<a href="{contact_url}">こちら</a>よりお問い合わせください。"""
                     
                     # メールメッセージを作成
                     msg = MIMEMultipart('alternative')
@@ -562,14 +631,13 @@ async def upload_satei_property(
                         msg['Bcc'] = bcc_address
                         logger.info(f"BCCアドレスを追加しました: {bcc_address}")
                     
-                    # 本文を追加（HTML形式）
-                    html_body = body.replace('\n', '<br>')
+                    # テキスト形式のメール本文を追加
+                    text_part = MIMEText(text_body, 'plain', 'utf-8')
+                    msg.attach(text_part)
+                    
+                    # HTML形式のメール本文を追加
                     html_part = MIMEText(html_body, 'html', 'utf-8')
                     msg.attach(html_part)
-                    
-                    # テキスト形式も追加
-                    text_part = MIMEText(body, 'plain', 'utf-8')
-                    msg.attach(text_part)
                     
                     # Base64エンコード
                     raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
