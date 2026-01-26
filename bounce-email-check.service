@@ -4,9 +4,22 @@ After=network.target
 
 [Service]
 Type=oneshot
-User=www-data
+User=root
+Group=root
 WorkingDirectory=/var/www/mirai-api
-Environment="PATH=/usr/bin:/usr/local/bin"
-ExecStart=/usr/bin/python3 /var/www/mirai-api/scripts/check_bounce_emails.py
+Environment=PATH=/var/www/mirai-api/venv/bin:/usr/bin:/usr/local/bin
+ExecStart=/var/www/mirai-api/venv/bin/python3 /var/www/mirai-api/scripts/check_bounce_emails.py
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=bounce-email-check
+
+# セキュリティ設定
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/mirai-api/logs /var/www/mirai-api/data
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
