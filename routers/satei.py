@@ -176,6 +176,62 @@ async def upload_satei_property(
         
         logger.info(f"最終的な担当者ID: {owner_user_id}")
         
+        # HubSpotコンタクトに関連付けられた会社名を取得
+        hubspot_company_name = None
+        if contact_info and contact_info.get("contact_id"):
+            try:
+                from hubspot.client import HubSpotBaseClient
+                base_client = HubSpotBaseClient()
+                
+                # 認証情報を確認
+                if base_client.api_key and base_client.api_key != "your-hubspot-api-key-here":
+                    contact_id = contact_info.get("contact_id")
+                    logger.info(f"コンタクトIDから会社名を取得: contact_id={contact_id}")
+                    
+                    # v4 APIを使用して関連会社を取得
+                    associations_response = await base_client._make_request(
+                        "GET", 
+                        f"/crm/v4/objects/contacts/{contact_id}/associations/companies",
+                        params={"limit": 100},
+                        timeout=60.0
+                    )
+                    
+                    if associations_response and associations_response.get('results'):
+                        # 最初の関連会社のIDを取得
+                        first_result = associations_response.get('results', [{}])[0]
+                        if isinstance(first_result, dict):
+                            company_id = first_result.get('toObjectId')
+                            if not company_id:
+                                company_id = first_result.get('id')
+                        else:
+                            company_id = first_result
+                        
+                        if company_id:
+                            # 会社情報を取得
+                            company_info = await base_client._make_request(
+                                "GET",
+                                f"/crm/v3/objects/companies/{company_id}",
+                                params={"properties": "name"},
+                                timeout=60.0
+                            )
+                            if company_info and company_info.get('properties'):
+                                hubspot_company_name = company_info.get('properties', {}).get('name')
+                                if hubspot_company_name:
+                                    logger.info(f"HubSpot会社名を取得: {hubspot_company_name}")
+                                else:
+                                    logger.warning(f"会社情報は取得できたが、会社名が空です: contact_id={contact_id}")
+                            else:
+                                logger.warning(f"会社情報の取得に失敗: contact_id={contact_id}, company_id={company_id}")
+                        else:
+                            logger.info(f"関連会社が見つかりませんでした: contact_id={contact_id}")
+                    else:
+                        logger.info(f"コンタクトに関連付けられた会社がありません: contact_id={contact_id}")
+                else:
+                    logger.warning("HubSpot API key not configured, skipping company name")
+            except Exception as e:
+                logger.error(f"HubSpot会社名取得エラー: {str(e)}", exc_info=True)
+                # エラーが発生しても処理は継続
+        
         # ユーザー情報を保存
         logger.info("データベース接続を開始します")
         conn = None
@@ -195,23 +251,33 @@ async def upload_satei_property(
                         user_id = existing_user[0]
                         unique_id = existing_user[1]
                         logger.info(f"既存ユーザーを使用: user_id={user_id}, unique_id={unique_id}, email={email}")
+                        
+                        # 既存ユーザーの場合、HubSpot会社名を更新（コンタクトIDがある場合のみ）
+                        if hubspot_company_name and contact_info and contact_info.get("contact_id"):
+                            await cursor.execute("""
+                                UPDATE satei_users 
+                                SET hubspot_company_name = %s 
+                                WHERE id = %s
+                            """, (hubspot_company_name, user_id))
+                            logger.info(f"既存ユーザーのHubSpot会社名を更新: user_id={user_id}, company_name={hubspot_company_name}")
                     else:
                         # 新規ユーザーの場合はユニークIDを生成して登録
                         unique_id = str(uuid.uuid4())
                         await cursor.execute("""
-                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name, hubspot_company_name)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """, (
                             unique_id,
                             email,
                             contact_info.get("contact_id") if contact_info else None,
                             contact_info.get("name") if contact_info else None,
                             contact_info.get("owner_id") if contact_info else None,
-                            contact_info.get("owner_name") if contact_info else None
+                            contact_info.get("owner_name") if contact_info else None,
+                            hubspot_company_name
                         ))
                         
                         user_id = cursor.lastrowid
-                        logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}")
+                        logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}, hubspot_company_name={hubspot_company_name}")
                     
                     # 査定物件を作成（担当者とフォーム入力の氏名、会社名を含む）
                     await cursor.execute("""
@@ -454,10 +520,10 @@ async def upload_satei_property(
                     mentions.append(owner_mention)
                 
                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-                mentions.append('<@U05FNC60W2V>')
+#                mentions.append('<@U05FNC60W2V>')
                 
                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-                mentions.append('<!subteam^S09B4NN6TTJ>')
+#                mentions.append('<!subteam^S09B4NN6TTJ>')
                 
                 # 通知内容を構築
                 contact_id = contact_info.get("contact_id") if contact_info else None
@@ -1053,7 +1119,7 @@ async def get_satei_properties(
                 total = total_result[0] if total_result else 0
                 
                 query = f"""
-                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, su.is_email_invalid
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, su.is_email_invalid, su.hubspot_company_name
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     {where_clause}
@@ -1129,7 +1195,7 @@ async def get_satei_property(
             async with conn.cursor() as cursor:
                 await cursor.execute("""
                     SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, 
-                           su.contact_id, su.owner_id, su.owner_name, su.is_email_invalid
+                           su.contact_id, su.owner_id, su.owner_name, su.is_email_invalid, su.hubspot_company_name
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
                     WHERE sp.id = %s
@@ -1395,10 +1461,10 @@ async def update_satei_property(
                                     mentions.append(owner_mention)
                                 
                                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-                                mentions.append('<@U05FNC60W2V>')
+#                                mentions.append('<@U05FNC60W2V>')
                                 
                                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-                                mentions.append('<!subteam^S09B4NN6TTJ>')
+#                                mentions.append('<!subteam^S09B4NN6TTJ>')
                                 
                                 # 通知内容を構築
                                 contact_id = property_dict.get('contact_id')
