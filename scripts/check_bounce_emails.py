@@ -79,8 +79,9 @@ BOUNCE_SUBJECT_PATTERNS = [
 # バウンスメール本文からメールアドレスを抽出するパターン
 EMAIL_PATTERN = r'[\w\.-]+@[\w\.-]+\.\w+'
 
-# チェック対象の時間範囲（過去24時間）
-CHECK_TIME_RANGE_HOURS = 24
+# チェック対象の時間範囲（過去72時間）
+# バウンスメールは送信後すぐに返ってくるとは限らないため、72時間に設定
+CHECK_TIME_RANGE_HOURS = 72
 
 
 def decode_mime_header(header_value: str) -> str:
@@ -250,29 +251,50 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
             ).execute()
             
             messages = results.get('messages', [])
-            logger.info(f"チェック対象メール数: {len(messages)}")
+            logger.info(f"チェック対象メール数: {len(messages)} (過去{CHECK_TIME_RANGE_HOURS}時間)")
+            logger.info(f"チェック対象時間範囲: {since_date.strftime('%Y-%m-%d %H:%M:%S')} ～ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
             bounce_count = 0
+            processed_message_ids = set()  # 処理済みメッセージIDを記録（重複チェック防止）
             
             for msg in messages:
                 try:
+                    message_id = msg['id']
+                    
+                    # 既に処理済みのメッセージはスキップ
+                    if message_id in processed_message_ids:
+                        logger.debug(f"メッセージID {message_id} は既に処理済みのためスキップ")
+                        continue
+                    
                     # メールの詳細を取得
                     message = service.users().messages().get(
                         userId='me',
-                        id=msg['id'],
+                        id=message_id,
                         format='full'
                     ).execute()
+                    
+                    # メールの受信日時を取得
+                    internal_date = message.get('internalDate')
+                    received_date = None
+                    if internal_date:
+                        received_date = datetime.fromtimestamp(int(internal_date) / 1000)
+                        logger.debug(f"メッセージID {message_id} の受信日時: {received_date.strftime('%Y-%m-%d %H:%M:%S')}")
                     
                     # ヘッダーを取得
                     headers = message['payload'].get('headers', [])
                     subject = ""
                     from_email = ""
+                    date_header = ""
                     
                     for header in headers:
                         if header['name'].lower() == 'subject':
                             subject = decode_mime_header(header['value'])
                         elif header['name'].lower() == 'from':
                             from_email = decode_mime_header(header['value'])
+                        elif header['name'].lower() == 'date':
+                            date_header = decode_mime_header(header['value'])
+                    
+                    logger.debug(f"メッセージID {message_id}: subject={subject[:50] if subject else 'N/A'}, from={from_email[:50] if from_email else 'N/A'}, date={date_header}")
                     
                     # 本文を取得（再帰的にマルチパートメッセージを処理）
                     def get_body_from_payload(payload):
@@ -358,8 +380,9 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
                                         """, (recipient_email,))
                                         await conn.commit()
                                         
-                                        logger.info(f"メールアドレスを無効に設定: {recipient_email} (user_id={user_result['id']}), user_id={user_id}")
+                                        logger.info(f"メールアドレスを無効に設定: {recipient_email} (user_id={user_result['id']}), user_id={user_id}, message_id={message_id}")
                                         bounce_count += 1
+                                        processed_message_ids.add(message_id)  # 処理済みとして記録
                                     else:
                                         logger.warning(f"抽出されたメールアドレスがsatei_usersテーブルに存在しません: {recipient_email}")
                         else:
