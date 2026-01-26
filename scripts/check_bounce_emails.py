@@ -443,6 +443,12 @@ async def main():
     except Exception as e:
         logger.error(f"バウンスメールチェック処理エラー: {str(e)}", exc_info=True)
         sys.exit(1)
+    finally:
+        # データベース接続プールを明示的に閉じる
+        try:
+            await db_connection.close_pool()
+        except Exception as e:
+            logger.warning(f"データベース接続プールのクローズ中にエラーが発生しました: {str(e)}")
 
 
 if __name__ == "__main__":
