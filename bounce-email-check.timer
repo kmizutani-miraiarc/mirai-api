@@ -1,0 +1,11 @@
+[Unit]
+Description=Check bounce emails every 10 minutes
+Requires=bounce-email-check.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Unit=bounce-email-check.service
+
+[Install]
+WantedBy=timers.target

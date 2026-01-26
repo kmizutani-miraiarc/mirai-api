@@ -1,0 +1,12 @@
+[Unit]
+Description=Check bounce emails for MiraiArc
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+WorkingDirectory=/var/www/mirai-api
+Environment="PATH=/usr/bin:/usr/local/bin"
+ExecStart=/usr/bin/python3 /var/www/mirai-api/scripts/check_bounce_emails.py
+StandardOutput=journal
+StandardError=journal

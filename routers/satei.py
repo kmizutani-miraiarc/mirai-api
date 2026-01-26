@@ -264,8 +264,8 @@ async def upload_satei_property(
                         # 新規ユーザーの場合はユニークIDを生成して登録
                         unique_id = str(uuid.uuid4())
                         await cursor.execute("""
-                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name, hubspot_company_name)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name, hubspot_company_name, is_email_invalid)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                         """, (
                             unique_id,
                             email,
@@ -570,7 +570,7 @@ async def upload_satei_property(
         
         # 査定依頼者へ自動返信メールを送信
         email_sent_successfully = False
-        is_email_invalid = False
+        is_email_invalid = False  # 'invalid'に設定される可能性がある
         try:
             # noreply@miraiarc.jpのユーザーIDを取得（送信元アカウントとして使用）
             noreply_user_id = None
@@ -696,11 +696,8 @@ async def upload_satei_property(
                     msg['To'] = email
                     msg['Subject'] = subject
                     
-                    # BCCを追加（環境変数から取得）
-                    bcc_address = os.getenv('GMAIL_BCC_ADDRESS', '').strip()
-                    if bcc_address:
-                        msg['Bcc'] = bcc_address
-                        logger.info(f"BCCアドレスを追加しました: {bcc_address}")
+                    # 自動返信メールではBCCを付けない（詳細からのメール送信時のみBCCを付ける）
+                    # この処理は自動返信メールなので、BCCは追加しない
                     
                     # テキスト形式のメール本文を追加
                     text_part = MIMEText(text_body, 'plain', 'utf-8')
@@ -721,8 +718,20 @@ async def upload_satei_property(
                             body=message
                         ).execute()
                         
+                        message_id = send_result.get('id')
+                        logger.info(f"査定依頼自動返信メールを送信しました: {email}, 件名: {subject}, message_id={message_id}")
+                        
+                        # 注意: Gmail APIのmessages().send()は、メールが正常に送信されたかどうかを返すだけで、
+                        # 実際の配信結果（バウンス）は後から返ってきます。
+                        # 存在しないメールアドレスでも、Gmail APIは成功を返す可能性があります。
+                        # 
+                        # 現時点では、送信成功を有効として扱います。
+                        # バウンスメールの監視は別途実装が必要です。
+                        # 
+                        # 注意: メール送信直後にバウンスを検知するのは技術的に難しいため、
+                        # この時点では有効として扱い、後でバウンスメールを監視して更新する必要があります。
                         email_sent_successfully = True
-                        logger.info(f"査定依頼自動返信メールを送信しました: {email}, 件名: {subject}, message_id: {send_result.get('id')}")
+                        
                     except HttpError as e:
                         error_detail = e.error_details[0] if e.error_details else {}
                         error_message = error_detail.get('message', str(e))
@@ -775,25 +784,33 @@ async def upload_satei_property(
                             logger.error(f"査定依頼自動返信メール送信エラー: {str(e)}, エラータイプ: {error_type}", exc_info=True)
                     
                     # メール送信結果に基づいてフラグを更新（user_idを使用）
+                    # 注意: Gmail APIのmessages().send()は送信成功を返しても、
+                    # 実際の配信結果（バウンス）は後から返ってくるため、
+                    # 即座にメール未達を検知するのは難しい。
+                    # ここでは、エラーが発生した場合のみ無効と判定し、
+                    # 成功した場合は有効として扱う（後でバウンスメールを監視して更新する必要がある）
                     try:
                         async with db_connection.get_connection() as conn:
                             async with conn.cursor() as cursor:
-                                if email_sent_successfully:
-                                    # 送信成功時はフラグをfalseに設定
+                                if is_email_invalid:
+                                    # メール未達エラーが検知された場合はフラグをinvalidに設定
                                     await cursor.execute("""
                                         UPDATE satei_users 
-                                        SET is_email_invalid = FALSE 
+                                        SET is_email_invalid = 'invalid' 
                                         WHERE id = %s
                                     """, (user_id,))
-                                    logger.info(f"メール送信成功: user_id={user_id}, email={email} のis_email_invalidフラグをFALSEに設定しました")
-                                elif is_email_invalid:
-                                    # メール未達エラーの場合はフラグをtrueに設定
+                                    logger.warning(f"メール未達エラー: user_id={user_id}, email={email} のis_email_invalidフラグをinvalidに設定しました")
+                                elif email_sent_successfully:
+                                    # 送信成功時はフラグをvalidに設定
+                                    # ただし、Gmail APIは送信成功を返しても実際の配信結果は後から返ってくるため、
+                                    # この時点では有効として扱う（後でバウンスメール監視で更新される可能性がある）
                                     await cursor.execute("""
                                         UPDATE satei_users 
-                                        SET is_email_invalid = TRUE 
+                                        SET is_email_invalid = 'valid' 
                                         WHERE id = %s
                                     """, (user_id,))
-                                    logger.warning(f"メール未達エラー: user_id={user_id}, email={email} のis_email_invalidフラグをTRUEに設定しました")
+                                    logger.info(f"メール送信成功: user_id={user_id}, email={email} のis_email_invalidフラグをvalidに設定しました（実際の配信結果は後から確認が必要）")
+                                # エラーも成功もない場合（Gmail APIサービス取得失敗など）はフラグを更新しない
                                 await conn.commit()
                     except Exception as flag_error:
                         logger.error(f"メール無効フラグ更新エラー: {str(flag_error)}", exc_info=True)
@@ -1638,12 +1655,15 @@ async def get_gmail_service(user_id: int):
         )
     
     # OAuth2認証情報を作成
+    # スコープ: gmail.sendonly（送信のみ）または gmail.readonly（読み取りのみ）
+    # バウンスメール監視には gmail.readonly が必要
     creds = Credentials(
         token=None,
         refresh_token=credentials['gmail_refresh_token'],
         token_uri='https://oauth2.googleapis.com/token',
         client_id=credentials['gmail_client_id'],
-        client_secret=credentials['gmail_client_secret']
+        client_secret=credentials['gmail_client_secret'],
+        scopes=['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly']
     )
     
     # トークンをリフレッシュ
