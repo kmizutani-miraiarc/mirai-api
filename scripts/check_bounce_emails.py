@@ -111,36 +111,77 @@ def extract_email_from_bounce_body(body: str) -> Optional[str]:
     body_lower = body.lower()
     
     # 一般的なバウンスメールのパターンからメールアドレスを抽出
-    # パターン1: "To: email@example.com"
-    to_pattern = r'to:\s*([\w\.-]+@[\w\.-]+\.\w+)'
-    match = re.search(to_pattern, body_lower, re.IGNORECASE)
-    if match:
-        return match.group(1)
+    # パターン1: "To: email@example.com" または "To: <email@example.com>"
+    to_patterns = [
+        r'to:\s*<?([\w\.-]+@[\w\.-]+\.\w+)>?',
+        r'^to\s*:\s*<?([\w\.-]+@[\w\.-]+\.\w+)>?',
+    ]
+    for pattern in to_patterns:
+        match = re.search(pattern, body_lower, re.IGNORECASE | re.MULTILINE)
+        if match:
+            email = match.group(1)
+            if 'miraiarc' not in email.lower() and 'noreply' not in email.lower():
+                return email
     
-    # パターン2: "Original-Recipient: email@example.com"
-    original_recipient_pattern = r'original-recipient:\s*([\w\.-]+@[\w\.-]+\.\w+)'
-    match = re.search(original_recipient_pattern, body_lower, re.IGNORECASE)
-    if match:
-        return match.group(1)
+    # パターン2: "Original-Recipient: email@example.com" または "Original-Recipient: rfc822;email@example.com"
+    original_recipient_patterns = [
+        r'original-recipient:\s*rfc822;\s*([\w\.-]+@[\w\.-]+\.\w+)',
+        r'original-recipient:\s*<?([\w\.-]+@[\w\.-]+\.\w+)>?',
+    ]
+    for pattern in original_recipient_patterns:
+        match = re.search(pattern, body_lower, re.IGNORECASE)
+        if match:
+            email = match.group(1)
+            if 'miraiarc' not in email.lower() and 'noreply' not in email.lower():
+                return email
     
-    # パターン3: "Final-Recipient: email@example.com"
-    final_recipient_pattern = r'final-recipient:\s*([\w\.-]+@[\w\.-]+\.\w+)'
-    match = re.search(final_recipient_pattern, body_lower, re.IGNORECASE)
-    if match:
-        return match.group(1)
+    # パターン3: "Final-Recipient: email@example.com" または "Final-Recipient: rfc822;email@example.com"
+    final_recipient_patterns = [
+        r'final-recipient:\s*rfc822;\s*([\w\.-]+@[\w\.-]+\.\w+)',
+        r'final-recipient:\s*<?([\w\.-]+@[\w\.-]+\.\w+)>?',
+    ]
+    for pattern in final_recipient_patterns:
+        match = re.search(pattern, body_lower, re.IGNORECASE)
+        if match:
+            email = match.group(1)
+            if 'miraiarc' not in email.lower() and 'noreply' not in email.lower():
+                return email
     
     # パターン4: "The following address(es) failed: email@example.com"
-    failed_pattern = r'failed[:\s]+([\w\.-]+@[\w\.-]+\.\w+)'
-    match = re.search(failed_pattern, body_lower, re.IGNORECASE)
-    if match:
-        return match.group(1)
+    failed_patterns = [
+        r'failed[:\s]+([\w\.-]+@[\w\.-]+\.\w+)',
+        r'address\(es\)\s+failed[:\s]+([\w\.-]+@[\w\.-]+\.\w+)',
+        r'failed\s+to\s+deliver\s+to[:\s]+([\w\.-]+@[\w\.-]+\.\w+)',
+    ]
+    for pattern in failed_patterns:
+        match = re.search(pattern, body_lower, re.IGNORECASE)
+        if match:
+            email = match.group(1)
+            if 'miraiarc' not in email.lower() and 'noreply' not in email.lower():
+                return email
     
-    # パターン5: 本文内の最初のメールアドレス（最後の手段）
+    # パターン5: "配信できませんでした" の後にメールアドレス
+    japanese_failed_patterns = [
+        r'配信できませんでした[。\s]*([\w\.-]+@[\w\.-]+\.\w+)',
+        r'([\w\.-]+@[\w\.-]+\.\w+)\s+にメールを配信できませんでした',
+        r'([\w\.-]+@[\w\.-]+\.\w+)\s+への配信に失敗',
+    ]
+    for pattern in japanese_failed_patterns:
+        match = re.search(pattern, body_lower, re.IGNORECASE)
+        if match:
+            email = match.group(1)
+            if 'miraiarc' not in email.lower() and 'noreply' not in email.lower():
+                return email
+    
+    # パターン6: 本文内の最初のメールアドレス（最後の手段）
+    # ただし、送信元アドレス（miraiarc、noreply、mailer-daemon、postmasterなど）を除外
     emails = re.findall(EMAIL_PATTERN, body)
     if emails:
-        # noreply@miraiarc.jpなどの送信元アドレスを除外
+        exclude_patterns = ['miraiarc', 'noreply', 'mailer-daemon', 'postmaster', 'mailer', 'daemon', 'googlemail.com', 'gmail.com']
         for email in emails:
-            if 'miraiarc' not in email.lower() and 'noreply' not in email.lower():
+            email_lower = email.lower()
+            # 送信元アドレスを除外
+            if not any(exclude in email_lower for exclude in exclude_patterns):
                 return email
     
     return None
@@ -347,8 +388,11 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
                     body = get_body_from_payload(message['payload'])
                     
                     # バウンスメールかどうかを判定
-                    if is_bounce_email(subject, body):
-                        logger.info(f"バウンスメールを検知: subject={subject}, from={from_email}")
+                    is_bounce = is_bounce_email(subject, body)
+                    logger.debug(f"メッセージID {message_id}: バウンス判定結果={is_bounce}, subject={subject[:100] if subject else 'N/A'}")
+                    
+                    if is_bounce:
+                        logger.info(f"バウンスメールを検知: subject={subject}, from={from_email}, message_id={message_id}")
                         
                         # デバッグ用: バウンスメールの本文の一部をログに出力（最初の500文字）
                         logger.debug(f"バウンスメール本文（最初の500文字）: {body[:500] if body else 'N/A'}")
@@ -357,7 +401,15 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
                         recipient_email = extract_email_from_bounce_body(body)
                         
                         if recipient_email:
-                            logger.info(f"抽出されたメールアドレス: {recipient_email}")
+                            logger.info(f"抽出されたメールアドレス: {recipient_email}, message_id={message_id}")
+                        else:
+                            logger.warning(f"バウンスメールからメールアドレスを抽出できませんでした: subject={subject}, message_id={message_id}")
+                            # デバッグ用: 本文の一部をログに出力（抽出失敗時）
+                            if body:
+                                logger.debug(f"バウンスメール本文（抽出失敗時、最初の1000文字）: {body[:1000]}")
+                    else:
+                        # バウンスメールではない場合もログに記録（デバッグ用）
+                        logger.debug(f"バウンスメールではない: subject={subject[:100] if subject else 'N/A'}, from={from_email[:50] if from_email else 'N/A'}, message_id={message_id}")
                             
                             # 抽出されたメールアドレスが実際に送信したメールアドレスか確認
                             # satei_usersテーブルに存在するメールアドレスのみを更新
