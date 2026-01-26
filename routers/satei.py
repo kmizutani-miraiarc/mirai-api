@@ -53,6 +53,7 @@ async def upload_satei_property(
     comment: Optional[str] = Form(None),
     firstName: Optional[str] = Form(None),
     lastName: Optional[str] = Form(None),
+    phoneNumber: Optional[str] = Form(None),
     api_key: dict = Depends(verify_api_key)
 ):
     """
@@ -62,6 +63,7 @@ async def upload_satei_property(
     - 査定物件として登録
     - ファイルは別途アップロードファイルテーブルに保存
     """
+    logger.info(f"査定物件アップロード開始: email={email}, phoneNumber={phoneNumber}, propertyName={propertyName}, companyName={companyName}")
     try:
         # メールアドレスでHubSpotコンタクトを検索
         from hubspot.contacts import HubSpotContactsClient
@@ -279,13 +281,26 @@ async def upload_satei_property(
                         user_id = cursor.lastrowid
                         logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}, hubspot_company_name={hubspot_company_name}")
                     
-                    # 査定物件を作成（担当者とフォーム入力の氏名、会社名を含む）
+                    # 査定物件を作成（担当者とフォーム入力の氏名、会社名、電話番号を含む）
+                    # 日本時間（JST）の今日の日付を取得
+                    try:
+                        from zoneinfo import ZoneInfo
+                        jst = ZoneInfo('Asia/Tokyo')
+                    except ImportError:
+                        # Python 3.8以前の場合はpytzを使用
+                        import pytz
+                        jst = pytz.timezone('Asia/Tokyo')
+                    
+                    today_jst = datetime.now(jst).date()
+                    
+                    logger.info(f"査定物件を作成: user_id={user_id}, phoneNumber={phoneNumber}, firstName={firstName}, lastName={lastName}, companyName={companyName}, request_date={today_jst}")
                     await cursor.execute("""
-                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, company_name, first_name, last_name, comment, request_date, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, CURDATE(), 'parsing')
-                    """, (user_id, owner_user_id, propertyName or "未設定", companyName or None, firstName or None, lastName or None, comment))
+                        INSERT INTO satei_properties (user_id, owner_user_id, property_name, company_name, first_name, last_name, phone_number, comment, request_date, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'parsing')
+                    """, (user_id, owner_user_id, propertyName or "未設定", companyName or None, firstName or None, lastName or None, phoneNumber or None, comment, today_jst))
                     
                     satei_property_id = cursor.lastrowid
+                    logger.info(f"査定物件を作成しました: property_id={satei_property_id}, phone_number={phoneNumber or None}")
                     
                     # ファイルを保存
                     saved_files = []
@@ -520,10 +535,10 @@ async def upload_satei_property(
                     mentions.append(owner_mention)
                 
                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-#                mentions.append('<@U05FNC60W2V>')
+                mentions.append('<@U05FNC60W2V>')
                 
                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-#                mentions.append('<!subteam^S09B4NN6TTJ>')
+                mentions.append('<!subteam^S09B4NN6TTJ>')
                 
                 # 通知内容を構築
                 contact_id = contact_info.get("contact_id") if contact_info else None
@@ -1233,7 +1248,7 @@ async def get_satei_property(
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute("""
-                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, su.unique_id, 
+                    SELECT sp.*, su.email, su.name as user_name, sp.first_name, sp.last_name, sp.phone_number, su.unique_id, 
                            su.contact_id, su.owner_id, su.owner_name, su.is_email_invalid, su.hubspot_company_name
                     FROM satei_properties sp
                     JOIN satei_users su ON sp.user_id = su.id
@@ -1499,10 +1514,10 @@ async def update_satei_property(
                                     mentions.append(owner_mention)
                                 
                                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-#                                mentions.append('<@U05FNC60W2V>')
+                                mentions.append('<@U05FNC60W2V>')
                                 
                                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-#                                mentions.append('<!subteam^S09B4NN6TTJ>')
+                                mentions.append('<!subteam^S09B4NN6TTJ>')
                                 
                                 # 通知内容を構築
                                 contact_id = property_dict.get('contact_id')
