@@ -529,22 +529,25 @@ async def upload_satei_property(
                 contact_id = contact_info.get("contact_id") if contact_info else None
                 contact_name = contact_info.get("name") if contact_info else "不明"
                 
-                # HubSpotページURL
-                hubspot_url = ""
+                # HubSpot会社名を取得（既に取得済みのhubspot_company_nameを使用）
+                hubspot_company_name_display = hubspot_company_name if hubspot_company_name else "取得できませんでした"
+                
+                # HubSpotコンタクトページURL
+                hubspot_contact_url = ""
                 if hubspot_id and contact_id:
-                    hubspot_url = f"https://app.hubspot.com/contacts/{hubspot_id}/contact/{contact_id}"
+                    hubspot_contact_url = f"https://app-na2.hubspot.com/contacts/{hubspot_id}/record/0-1/{contact_id}"
                 else:
-                    hubspot_url = "取得できませんでした"
+                    hubspot_contact_url = "取得できませんでした"
                 
                 # 査定物件URL
                 satei_url = f"{mirai_base_url}/admin/satei/detail/{satei_property_id}"
                 
                 # メッセージを構築
-                message_text = f"{' '.join(mentions)} 査定依頼がありました\n\n"
-                message_text += f"Hubspotページ：{hubspot_url}\n"
-                message_text += f"会社名：{company_name_display}\n"
-                message_text += f"コンタクト名：{contact_name}\n"
-                message_text += f"査定物件URL：{satei_url}"
+                message_text = f"{' '.join(mentions)} \n買取査定依頼がありました。\n"
+                message_text += f"・HubSpotコンタクトページURL\n{hubspot_contact_url}\n"
+                message_text += f"・HubSpot会社名\n{hubspot_company_name_display}\n"
+                message_text += f"・HubSpotコンタクト名\n{contact_name}\n\n"
+                message_text += f"・査定物件URL\n{satei_url}"
                 
                 message = {'text': message_text}
                 
@@ -725,32 +728,51 @@ async def upload_satei_property(
                         error_message = error_detail.get('message', str(e))
                         error_code = e.resp.status if hasattr(e, 'resp') else None
                         
+                        # エラーの詳細をログに記録
+                        logger.error(f"Gmail API HttpError詳細: status={error_code}, message={error_message}, error_details={e.error_details}, full_error={str(e)}")
+                        
                         # メール未達エラーを判定（一般的なメール未達エラーコード）
                         # Gmail APIのエラーメッセージに含まれる可能性のあるキーワード
                         invalid_email_keywords = [
                             'invalid', 'not found', 'does not exist', 'unavailable',
                             'bounce', 'rejected', 'undeliverable', 'delivery failed',
-                            '550', '551', '552', '553', '554', 'mailbox', 'address'
+                            '550', '551', '552', '553', '554', 'mailbox', 'address',
+                            'recipient', 'user unknown', 'no such user', 'address rejected',
+                            'permanent failure', 'temporary failure', 'domain', 'mx record',
+                            'smtp', 'relay', 'access denied', 'quota exceeded', 'blocked'
                         ]
                         
+                        # エラーメッセージ全体を確認（error_detailsも含む）
+                        error_text = str(e).lower()
                         error_message_lower = error_message.lower()
-                        if any(keyword in error_message_lower for keyword in invalid_email_keywords):
+                        error_details_text = str(e.error_details).lower() if e.error_details else ""
+                        full_error_text = f"{error_text} {error_message_lower} {error_details_text}"
+                        
+                        if any(keyword in full_error_text for keyword in invalid_email_keywords):
                             is_email_invalid = True
-                            logger.warning(f"メールアドレスが無効の可能性: {email}, エラー: {error_message}")
+                            logger.warning(f"メールアドレスが無効と判定: {email}, エラー: {error_message}, エラーコード: {error_code}")
                         else:
-                            logger.error(f"査定依頼自動返信メール送信エラー（Gmail API）: {error_message}")
+                            logger.error(f"査定依頼自動返信メール送信エラー（Gmail API）: {error_message}, エラーコード: {error_code}")
                     except Exception as e:
                         error_message = str(e).lower()
+                        error_type = type(e).__name__
+                        
+                        # エラーの詳細をログに記録
+                        logger.error(f"Gmail API Exception詳細: type={error_type}, message={str(e)}", exc_info=True)
+                        
                         # メール未達エラーを判定
                         invalid_email_keywords = [
                             'invalid', 'not found', 'does not exist', 'unavailable',
-                            'bounce', 'rejected', 'undeliverable', 'delivery failed'
+                            'bounce', 'rejected', 'undeliverable', 'delivery failed',
+                            'recipient', 'user unknown', 'no such user', 'address rejected',
+                            'permanent failure', 'temporary failure', 'domain', 'mx record',
+                            'smtp', 'relay', 'access denied', 'quota exceeded', 'blocked'
                         ]
                         if any(keyword in error_message for keyword in invalid_email_keywords):
                             is_email_invalid = True
-                            logger.warning(f"メールアドレスが無効の可能性: {email}, エラー: {str(e)}")
+                            logger.warning(f"メールアドレスが無効と判定: {email}, エラー: {str(e)}, エラータイプ: {error_type}")
                         else:
-                            logger.error(f"査定依頼自動返信メール送信エラー: {str(e)}", exc_info=True)
+                            logger.error(f"査定依頼自動返信メール送信エラー: {str(e)}, エラータイプ: {error_type}", exc_info=True)
                     
                     # メール送信結果に基づいてフラグを更新（user_idを使用）
                     try:
@@ -1392,7 +1414,7 @@ async def update_satei_property(
                         # 査定物件の情報を取得
                         await cursor.execute("""
                             SELECT sp.*, su.email, su.name as user_name, su.contact_id, su.owner_id, su.owner_name,
-                                   sp.company_name, sp.first_name, sp.last_name, sp.owner_user_id
+                                   sp.company_name, sp.first_name, sp.last_name, sp.owner_user_id, su.hubspot_company_name
                             FROM satei_properties sp
                             JOIN satei_users su ON sp.user_id = su.id
                             WHERE sp.id = %s
@@ -1412,11 +1434,10 @@ async def update_satei_property(
                             if not slack_webhook_url:
                                 logger.warning("SLACK_WEBHOOK_SATEI環境変数が設定されていません。販売希望のSlack通知をスキップします。")
                             else:
-                                # 会社名を取得
-                                company_name_display = "未入力"
-                                company_name = property_dict.get('company_name')
-                                if company_name and str(company_name).strip():
-                                    company_name_display = str(company_name).strip()
+                                # HubSpot会社名を取得
+                                hubspot_company_name_display = property_dict.get('hubspot_company_name')
+                                if not hubspot_company_name_display or not str(hubspot_company_name_display).strip():
+                                    hubspot_company_name_display = "取得できませんでした"
                                 
                                 # 担当者のメンションを取得（コンタクト担当者）
                                 owner_mention = ""
@@ -1470,22 +1491,22 @@ async def update_satei_property(
                                 contact_id = property_dict.get('contact_id')
                                 contact_name = property_dict.get('user_name') or "不明"
                                 
-                                # HubSpotページURL
-                                hubspot_url = ""
+                                # HubSpotコンタクトページURL
+                                hubspot_contact_url = ""
                                 if hubspot_id and contact_id:
-                                    hubspot_url = f"https://app.hubspot.com/contacts/{hubspot_id}/contact/{contact_id}"
+                                    hubspot_contact_url = f"https://app-na2.hubspot.com/contacts/{hubspot_id}/record/0-1/{contact_id}"
                                 else:
-                                    hubspot_url = "取得できませんでした"
+                                    hubspot_contact_url = "取得できませんでした"
                                 
                                 # 査定物件URL
                                 satei_url = f"{mirai_base_url}/admin/satei/detail/{property_id}"
                                 
                                 # メッセージを構築
-                                message_text = f"{' '.join(mentions)} 販売希望がありました\n\n"
-                                message_text += f"Hubspotページ：{hubspot_url}\n"
-                                message_text += f"会社名：{company_name_display}\n"
-                                message_text += f"コンタクト名：{contact_name}\n"
-                                message_text += f"査定物件URL：{satei_url}"
+                                message_text = f"{' '.join(mentions)} \n■■■■■売却希望■■■■■\n"
+                                message_text += f"・HubSpotコンタクトページURL\n{hubspot_contact_url}\n"
+                                message_text += f"・HubSpot会社名\n{hubspot_company_name_display}\n"
+                                message_text += f"・HubSpotコンタクト名\n{contact_name}\n"
+                                message_text += f"・査定物件URL\n{satei_url}"
                                 
                                 message = {'text': message_text}
                                 
