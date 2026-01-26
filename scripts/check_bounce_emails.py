@@ -187,12 +187,40 @@ def extract_email_from_bounce_body(body: str) -> Optional[str]:
     return None
 
 
-def is_bounce_email(subject: str, body: str) -> bool:
+def is_bounce_email(subject: str, body: str, from_email: str = "") -> bool:
     """メールがバウンスメールかどうかを判定"""
     if not subject:
         return False
     
     subject_lower = subject.lower()
+    from_lower = from_email.lower() if from_email else ""
+    
+    # 送信元アドレスをチェック（バウンスメールの送信元のみを対象）
+    # 通常のメールマガジンなどを除外するため、送信元チェックを必須とする
+    bounce_from_patterns = [
+        'mailer-daemon',
+        'mailer daemon',
+        'postmaster',
+        'mail administrator',
+        'mail delivery subsystem',
+        'mail delivery',
+        'daemon',
+        'noreply',
+        'no-reply',
+        'bounce',
+        'returned',
+        'undelivered',
+    ]
+    
+    is_from_bounce_sender = False
+    for pattern in bounce_from_patterns:
+        if pattern in from_lower:
+            is_from_bounce_sender = True
+            break
+    
+    # 送信元がバウンスメールの送信元でない場合、バウンスメールではない
+    if not is_from_bounce_sender:
+        return False
     
     # 件名パターンマッチング
     for pattern in BOUNCE_SUBJECT_PATTERNS:
@@ -224,6 +252,10 @@ def is_bounce_email(subject: str, body: str) -> bool:
             '配信エラー',
             '配信失敗',
             '未達',
+            'final-recipient',
+            'original-recipient',
+            'action: failed',
+            'status:',
         ]
         
         for keyword in bounce_keywords:
@@ -387,9 +419,9 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
                     
                     body = get_body_from_payload(message['payload'])
                     
-                    # バウンスメールかどうかを判定
-                    is_bounce = is_bounce_email(subject, body)
-                    logger.debug(f"メッセージID {message_id}: バウンス判定結果={is_bounce}, subject={subject[:100] if subject else 'N/A'}")
+                    # バウンスメールかどうかを判定（送信元アドレスも含める）
+                    is_bounce = is_bounce_email(subject, body, from_email)
+                    logger.debug(f"メッセージID {message_id}: バウンス判定結果={is_bounce}, subject={subject[:100] if subject else 'N/A'}, from={from_email[:50] if from_email else 'N/A'}")
                     
                     if is_bounce:
                         logger.info(f"バウンスメールを検知: subject={subject}, from={from_email}, message_id={message_id}")
@@ -402,14 +434,6 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
                         
                         if recipient_email:
                             logger.info(f"抽出されたメールアドレス: {recipient_email}, message_id={message_id}")
-                        else:
-                            logger.warning(f"バウンスメールからメールアドレスを抽出できませんでした: subject={subject}, message_id={message_id}")
-                            # デバッグ用: 本文の一部をログに出力（抽出失敗時）
-                            if body:
-                                logger.debug(f"バウンスメール本文（抽出失敗時、最初の1000文字）: {body[:1000]}")
-                    else:
-                        # バウンスメールではない場合もログに記録（デバッグ用）
-                        logger.debug(f"バウンスメールではない: subject={subject[:100] if subject else 'N/A'}, from={from_email[:50] if from_email else 'N/A'}, message_id={message_id}")
                             
                             # 抽出されたメールアドレスが実際に送信したメールアドレスか確認
                             # satei_usersテーブルに存在するメールアドレスのみを更新
@@ -438,10 +462,13 @@ async def check_bounce_emails_for_user(user_id: int) -> int:
                                     else:
                                         logger.warning(f"抽出されたメールアドレスがsatei_usersテーブルに存在しません: {recipient_email}")
                         else:
-                            logger.warning(f"バウンスメールから送信先メールアドレスを抽出できませんでした: subject={subject}")
-                            # デバッグ用: 本文の一部をログに出力
+                            logger.warning(f"バウンスメールからメールアドレスを抽出できませんでした: subject={subject}, message_id={message_id}")
+                            # デバッグ用: 本文の一部をログに出力（抽出失敗時）
                             if body:
                                 logger.debug(f"バウンスメール本文（抽出失敗時、最初の1000文字）: {body[:1000]}")
+                    else:
+                        # バウンスメールではない場合もログに記録（デバッグ用）
+                        logger.debug(f"バウンスメールではない: subject={subject[:100] if subject else 'N/A'}, from={from_email[:50] if from_email else 'N/A'}, message_id={message_id}")
                     
                 except Exception as e:
                     logger.error(f"メール処理エラー: message_id={msg.get('id')}, error={str(e)}", exc_info=True)
