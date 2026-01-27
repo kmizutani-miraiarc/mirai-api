@@ -47,7 +47,7 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None)):
 @router.post("/satei/upload")
 async def upload_satei_property(
     email: str = Form(...),
-    files: List[UploadFile] = File(...),
+    files: Optional[List[UploadFile]] = File(None),
     propertyName: Optional[str] = Form(None),
     companyName: Optional[str] = Form(None),
     comment: Optional[str] = Form(None),
@@ -341,137 +341,142 @@ async def upload_satei_property(
                             detail=f"アップロードディレクトリの作成に失敗しました: {upload_dir}。環境変数SATEI_UPLOAD_DIRを書き込み可能なディレクトリに設定してください。"
                         )
                     
-                    # ファイルサイズ制限（各ファイル最大50MB、合計最大200MB）
-                    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-                    MAX_TOTAL_SIZE = 200 * 1024 * 1024  # 200MB
-                    total_size = 0
-                    
-                    for file in files:
-                        # ファイルサイズをチェック（先に読み込んでサイズを確認）
-                        file_content = await file.read()
-                        file_size = len(file_content)
-                        total_size += file_size
+                    # ファイルが提供されている場合のみ処理
+                    saved_files = []
+                    if files is not None and len(files) > 0:
+                        # ファイルサイズ制限（各ファイル最大50MB、合計最大200MB）
+                        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+                        MAX_TOTAL_SIZE = 200 * 1024 * 1024  # 200MB
+                        total_size = 0
                         
-                        # 各ファイルのサイズチェック
-                        if file_size > MAX_FILE_SIZE:
-                            await conn.rollback()
-                            raise HTTPException(
-                                status_code=413,
-                                detail=f"ファイル '{file.filename}' のサイズが大きすぎます（最大50MB）。現在のサイズ: {file_size / (1024 * 1024):.2f}MB"
-                            )
-                        
-                        # 合計サイズのチェック
-                        if total_size > MAX_TOTAL_SIZE:
-                            await conn.rollback()
-                            raise HTTPException(
-                                status_code=413,
-                                detail=f"アップロードファイルの合計サイズが大きすぎます（最大200MB）。現在の合計サイズ: {total_size / (1024 * 1024):.2f}MB"
-                            )
-                        
-                        # ファイル名を適切にデコード（文字化け対策）
-                        original_filename = file.filename
-                        
-                        # ファイルポインタを先頭に戻す（後で保存するため）
-                        await file.seek(0)
-                        
-                        # Content-Dispositionヘッダーからファイル名を取得（より確実）
-                        if not original_filename:
-                            # Content-Dispositionヘッダーから直接取得を試みる
-                            content_disposition = file.headers.get("content-disposition", "")
-                            if content_disposition:
-                                # filename*=UTF-8''形式またはfilename="..."形式を検索
-                                filename_match = re.search(r'filename\*=UTF-8\'\'([^;]+)', content_disposition)
-                                if not filename_match:
-                                    filename_match = re.search(r'filename="([^"]+)"', content_disposition)
-                                if not filename_match:
-                                    filename_match = re.search(r'filename=([^;]+)', content_disposition)
-                                if filename_match:
-                                    original_filename = filename_match.group(1)
-                        
-                        if original_filename:
-                            # 文字化け修復を試みる
-                            decoded_filename = original_filename
-                            try:
-                                # まず、RFC 2231形式（UTF-8''）でエンコードされている場合のデコード
-                                decoded_filename = unquote(original_filename, encoding='utf-8')
-                            except Exception:
+                        for file in files:
+                            # ファイルサイズをチェック（先に読み込んでサイズを確認）
+                            file_content = await file.read()
+                            file_size = len(file_content)
+                            total_size += file_size
+                            
+                            # 各ファイルのサイズチェック
+                            if file_size > MAX_FILE_SIZE:
+                                await conn.rollback()
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=f"ファイル '{file.filename}' のサイズが大きすぎます（最大50MB）。現在のサイズ: {file_size / (1024 * 1024):.2f}MB"
+                                )
+                            
+                            # 合計サイズのチェック
+                            if total_size > MAX_TOTAL_SIZE:
+                                await conn.rollback()
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=f"アップロードファイルの合計サイズが大きすぎます（最大200MB）。現在の合計サイズ: {total_size / (1024 * 1024):.2f}MB"
+                                )
+                            
+                            # ファイル名を適切にデコード（文字化け対策）
+                            original_filename = file.filename
+                            
+                            # ファイルポインタを先頭に戻す（後で保存するため）
+                            await file.seek(0)
+                            
+                            # Content-Dispositionヘッダーからファイル名を取得（より確実）
+                            if not original_filename:
+                                # Content-Dispositionヘッダーから直接取得を試みる
+                                content_disposition = file.headers.get("content-disposition", "")
+                                if content_disposition:
+                                    # filename*=UTF-8''形式またはfilename="..."形式を検索
+                                    filename_match = re.search(r'filename\*=UTF-8\'\'([^;]+)', content_disposition)
+                                    if not filename_match:
+                                        filename_match = re.search(r'filename="([^"]+)"', content_disposition)
+                                    if not filename_match:
+                                        filename_match = re.search(r'filename=([^;]+)', content_disposition)
+                                    if filename_match:
+                                        original_filename = filename_match.group(1)
+                            
+                            if original_filename:
+                                # 文字化け修復を試みる
+                                decoded_filename = original_filename
                                 try:
-                                    # 通常のURLエンコードの場合
-                                    decoded_filename = unquote(original_filename)
+                                    # まず、RFC 2231形式（UTF-8''）でエンコードされている場合のデコード
+                                    decoded_filename = unquote(original_filename, encoding='utf-8')
                                 except Exception:
-                                    pass
-                            
-                            # 文字化けしたファイル名を修復（Latin-1として解釈されたUTF-8を修復）
-                            try:
-                                # Latin-1/Windows-1252として解釈されたUTF-8バイト列を修復
-                                if decoded_filename and any(ord(c) > 127 for c in decoded_filename):
-                                    # 文字化けしている可能性がある場合、Latin-1でエンコードしてUTF-8でデコード
                                     try:
-                                        repaired = decoded_filename.encode('latin-1').decode('utf-8')
-                                        if repaired != decoded_filename:
-                                            logger.info(f"ファイル名を修復: {decoded_filename} -> {repaired}")
-                                            decoded_filename = repaired
-                                    except (UnicodeEncodeError, UnicodeDecodeError):
-                                        # 修復に失敗した場合は元のファイル名を使用
+                                        # 通常のURLエンコードの場合
+                                        decoded_filename = unquote(original_filename)
+                                    except Exception:
                                         pass
-                            except Exception as e:
-                                logger.warning(f"ファイル名修復エラー: {str(e)}, 元のファイル名を使用: {original_filename}")
-                        else:
-                            decoded_filename = "unknown_file"
-                        
-                        # ファイル名を生成（ファイルシステム用に安全なファイル名に変換）
-                        # ファイル名から危険な文字を除去
-                        safe_filename = re.sub(r'[<>:"/\\|?*]', '_', decoded_filename)
-                        new_filename = f"{unique_id}_{safe_filename}"
-                        file_path = os.path.join(upload_dir, new_filename)
-                        
-                        # ファイルを保存（既に読み込んだ内容を使用）
-                        try:
-                            # ディレクトリが存在することを再確認（念のため）
-                            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                                
+                                # 文字化けしたファイル名を修復（Latin-1として解釈されたUTF-8を修復）
+                                try:
+                                    # Latin-1/Windows-1252として解釈されたUTF-8バイト列を修復
+                                    if decoded_filename and any(ord(c) > 127 for c in decoded_filename):
+                                        # 文字化けしている可能性がある場合、Latin-1でエンコードしてUTF-8でデコード
+                                        try:
+                                            repaired = decoded_filename.encode('latin-1').decode('utf-8')
+                                            if repaired != decoded_filename:
+                                                logger.info(f"ファイル名を修復: {decoded_filename} -> {repaired}")
+                                                decoded_filename = repaired
+                                        except (UnicodeEncodeError, UnicodeDecodeError):
+                                            # 修復に失敗した場合は元のファイル名を使用
+                                            pass
+                                except Exception as e:
+                                    logger.warning(f"ファイル名修復エラー: {str(e)}, 元のファイル名を使用: {original_filename}")
+                            else:
+                                decoded_filename = "unknown_file"
                             
-                            with open(file_path, "wb") as f:
-                                f.write(file_content)
-                            logger.info(f"ファイルを保存しました: {file_path} ({len(file_content)} bytes)")
-                        except PermissionError as perm_error:
-                            logger.error(f"ファイル保存権限エラー: {file_path}, エラー: {str(perm_error)}")
-                            await conn.rollback()
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"ファイルの保存に失敗しました（権限エラー）: {str(perm_error)}。ディレクトリ '{upload_dir}' に書き込み権限があるか確認してください。"
-                            )
-                        except OSError as os_error:
-                            logger.error(f"ファイル保存エラー: {file_path}, エラー: {str(os_error)}")
-                            await conn.rollback()
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"ファイルの保存に失敗しました: {str(os_error)}。ディレクトリ '{upload_dir}' が存在し、書き込み可能であることを確認してください。"
-                            )
-                        except Exception as file_error:
-                            logger.error(f"ファイル保存予期しないエラー: {file_path}, エラー: {str(file_error)}")
-                            await conn.rollback()
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"ファイルの保存中に予期しないエラーが発生しました: {str(file_error)}"
-                            )
-                        
-                        # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
-                        await cursor.execute("""
-                            INSERT INTO upload_files (entity_type, entity_id, file_name, file_path, file_size, mime_type)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                        """, (
-                            'satei_property',
-                            satei_property_id,
-                            decoded_filename,
-                            file_path,
-                            os.path.getsize(file_path),
-                            file.content_type
-                        ))
-                        
-                        saved_files.append({
-                            "original_name": decoded_filename,
-                            "saved_path": file_path
-                        })
+                            # ファイル名を生成（ファイルシステム用に安全なファイル名に変換）
+                            # ファイル名から危険な文字を除去
+                            safe_filename = re.sub(r'[<>:"/\\|?*]', '_', decoded_filename)
+                            new_filename = f"{unique_id}_{safe_filename}"
+                            file_path = os.path.join(upload_dir, new_filename)
+                            
+                            # ファイルを保存（既に読み込んだ内容を使用）
+                            try:
+                                # ディレクトリが存在することを再確認（念のため）
+                                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                                
+                                with open(file_path, "wb") as f:
+                                    f.write(file_content)
+                                logger.info(f"ファイルを保存しました: {file_path} ({len(file_content)} bytes)")
+                            except PermissionError as perm_error:
+                                logger.error(f"ファイル保存権限エラー: {file_path}, エラー: {str(perm_error)}")
+                                await conn.rollback()
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail=f"ファイルの保存に失敗しました（権限エラー）: {str(perm_error)}。ディレクトリ '{upload_dir}' に書き込み権限があるか確認してください。"
+                                )
+                            except OSError as os_error:
+                                logger.error(f"ファイル保存エラー: {file_path}, エラー: {str(os_error)}")
+                                await conn.rollback()
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail=f"ファイルの保存に失敗しました: {str(os_error)}。ディレクトリ '{upload_dir}' が存在し、書き込み可能であることを確認してください。"
+                                )
+                            except Exception as file_error:
+                                logger.error(f"ファイル保存予期しないエラー: {file_path}, エラー: {str(file_error)}")
+                                await conn.rollback()
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail=f"ファイルの保存中に予期しないエラーが発生しました: {str(file_error)}"
+                                )
+                            
+                            # アップロードファイルテーブルに保存（デコードされたファイル名を使用）
+                            await cursor.execute("""
+                                INSERT INTO upload_files (entity_type, entity_id, file_name, file_path, file_size, mime_type)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                            """, (
+                                'satei_property',
+                                satei_property_id,
+                                decoded_filename,
+                                file_path,
+                                os.path.getsize(file_path),
+                                file.content_type
+                            ))
+                            
+                            saved_files.append({
+                                "original_name": decoded_filename,
+                                "saved_path": file_path
+                            })
+                    else:
+                        logger.info("ファイルは提供されていません（任意項目）")
                     
                     logger.info(f"データベースにコミットします: saved_files数={len(saved_files)}")
                     await conn.commit()
@@ -535,10 +540,10 @@ async def upload_satei_property(
                     mentions.append(owner_mention)
                 
                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-                mentions.append('<@U05FNC60W2V>')
+#                mentions.append('<@U05FNC60W2V>')
                 
                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-                mentions.append('<!subteam^S09B4NN6TTJ>')
+#                mentions.append('<!subteam^S09B4NN6TTJ>')
                 
                 # 通知内容を構築
                 contact_id = contact_info.get("contact_id") if contact_info else None
@@ -1514,10 +1519,10 @@ async def update_satei_property(
                                     mentions.append(owner_mention)
                                 
                                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-                                mentions.append('<@U05FNC60W2V>')
+#                                mentions.append('<@U05FNC60W2V>')
                                 
                                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-                                mentions.append('<!subteam^S09B4NN6TTJ>')
+#                                mentions.append('<!subteam^S09B4NN6TTJ>')
                                 
                                 # 通知内容を構築
                                 contact_id = property_dict.get('contact_id')
