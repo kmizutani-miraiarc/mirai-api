@@ -254,20 +254,51 @@ async def upload_satei_property(
                         unique_id = existing_user[1]
                         logger.info(f"既存ユーザーを使用: user_id={user_id}, unique_id={unique_id}, email={email}")
                         
-                        # 既存ユーザーの場合、HubSpot会社名を更新（コンタクトIDがある場合のみ）
+                        # 既存ユーザーの場合、最新のフォーム入力情報で上書き
+                        update_fields = []
+                        update_values = []
+                        
+                        # HubSpot会社名を更新（コンタクトIDがある場合のみ）
                         if hubspot_company_name and contact_info and contact_info.get("contact_id"):
-                            await cursor.execute("""
+                            update_fields.append("hubspot_company_name = %s")
+                            update_values.append(hubspot_company_name)
+                        
+                        # フォーム入力の会社名を更新（値がある場合のみ）
+                        if companyName:
+                            update_fields.append("company_name = %s")
+                            update_values.append(companyName)
+                        
+                        # フォーム入力の姓を更新（値がある場合のみ）
+                        if lastName:
+                            update_fields.append("last_name = %s")
+                            update_values.append(lastName)
+                        
+                        # フォーム入力の名を更新（値がある場合のみ）
+                        if firstName:
+                            update_fields.append("first_name = %s")
+                            update_values.append(firstName)
+                        
+                        # フォーム入力の電話番号を更新（値がある場合のみ）
+                        if phoneNumber:
+                            update_fields.append("phone_number = %s")
+                            update_values.append(phoneNumber)
+                        
+                        # 更新するフィールドがある場合のみUPDATEを実行
+                        if update_fields:
+                            update_values.append(user_id)
+                            update_query = f"""
                                 UPDATE satei_users 
-                                SET hubspot_company_name = %s 
+                                SET {', '.join(update_fields)}
                                 WHERE id = %s
-                            """, (hubspot_company_name, user_id))
-                            logger.info(f"既存ユーザーのHubSpot会社名を更新: user_id={user_id}, company_name={hubspot_company_name}")
+                            """
+                            await cursor.execute(update_query, tuple(update_values))
+                            logger.info(f"既存ユーザー情報を更新: user_id={user_id}, fields={update_fields}")
                     else:
                         # 新規ユーザーの場合はユニークIDを生成して登録
                         unique_id = str(uuid.uuid4())
                         await cursor.execute("""
-                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name, hubspot_company_name, is_email_invalid)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                            INSERT INTO satei_users (unique_id, email, contact_id, name, owner_id, owner_name, hubspot_company_name, company_name, last_name, first_name, phone_number, is_email_invalid)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
                         """, (
                             unique_id,
                             email,
@@ -275,11 +306,15 @@ async def upload_satei_property(
                             contact_info.get("name") if contact_info else None,
                             contact_info.get("owner_id") if contact_info else None,
                             contact_info.get("owner_name") if contact_info else None,
-                            hubspot_company_name
+                            hubspot_company_name,
+                            companyName or None,
+                            lastName or None,
+                            firstName or None,
+                            phoneNumber or None
                         ))
                         
                         user_id = cursor.lastrowid
-                        logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}, hubspot_company_name={hubspot_company_name}")
+                        logger.info(f"新規ユーザーを作成: user_id={user_id}, unique_id={unique_id}, email={email}, company_name={companyName}, last_name={lastName}, first_name={firstName}, phone_number={phoneNumber}")
                     
                     # 査定物件を作成（担当者とフォーム入力の氏名、会社名、電話番号を含む）
                     # 日本時間（JST）の今日の日付を取得
@@ -917,22 +952,44 @@ async def upload_satei_property(
 async def get_satei_users(
     limit: int = 100,
     offset: int = 0,
+    search: Optional[str] = None,
     api_key: dict = Depends(verify_api_key)
 ):
-    """査定物件ユーザー一覧を取得"""
+    """査定物件ユーザー一覧を取得（検索対応）"""
     try:
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
+                # WHERE句を構築
+                where_conditions = []
+                params = []
+                
+                if search:
+                    # 名前かメールアドレスで検索
+                    where_conditions.append("""
+                        (su.email LIKE %s OR su.name LIKE %s 
+                         OR su.last_name LIKE %s OR su.first_name LIKE %s
+                         OR CONCAT(su.last_name, ' ', su.first_name) LIKE %s)
+                    """)
+                    search_pattern = f"%{search}%"
+                    params.extend([search_pattern, search_pattern, search_pattern, search_pattern, search_pattern])
+                
+                where_clause = ""
+                if where_conditions:
+                    where_clause = "WHERE " + " AND ".join(where_conditions)
+                
                 # ユーザー一覧と各ユーザーの査定物件数を取得
-                await cursor.execute("""
+                query = f"""
                     SELECT su.*, COUNT(DISTINCT sp.id) as property_count
                     FROM satei_users su
                     LEFT JOIN satei_properties sp ON su.id = sp.user_id
+                    {where_clause}
                     GROUP BY su.id
                     ORDER BY su.created_at DESC
                     LIMIT %s OFFSET %s
-                """, (limit, offset))
+                """
+                params.extend([limit, offset])
                 
+                await cursor.execute(query, tuple(params))
                 users = await cursor.fetchall()
                 
                 # カラム名を取得
@@ -965,9 +1022,10 @@ async def get_user_properties_by_unique_id(
     try:
         async with db_connection.get_connection() as conn:
             async with conn.cursor() as cursor:
-                # ユーザーIDを取得
+                # ユーザー情報を取得（フォーム入力の会社名、姓名、電話番号を含む）
                 await cursor.execute("""
-                    SELECT id, name, email FROM satei_users WHERE unique_id = %s
+                    SELECT id, name, email, company_name, last_name, first_name, phone_number, hubspot_company_name
+                    FROM satei_users WHERE unique_id = %s
                 """, (unique_id,))
                 
                 user_result = await cursor.fetchone()
@@ -977,6 +1035,11 @@ async def get_user_properties_by_unique_id(
                 user_id = user_result[0]
                 user_name = user_result[1] if user_result[1] else ""
                 user_email = user_result[2] if user_result[2] else ""
+                user_company_name = user_result[3] if user_result[3] else None
+                user_last_name = user_result[4] if user_result[4] else None
+                user_first_name = user_result[5] if user_result[5] else None
+                user_phone_number = user_result[6] if user_result[6] else None
+                user_hubspot_company_name = user_result[7] if user_result[7] else None
                 
                 # 総件数を取得
                 await cursor.execute("""
@@ -1049,7 +1112,12 @@ async def get_user_properties_by_unique_id(
                     "id": user_id,
                     "name": user_name,
                     "email": user_email,
-                    "unique_id": unique_id
+                    "unique_id": unique_id,
+                    "company_name": user_company_name,
+                    "last_name": user_last_name,
+                    "first_name": user_first_name,
+                    "phone_number": user_phone_number,
+                    "hubspot_company_name": user_hubspot_company_name
                 }
             }
         }
@@ -1060,6 +1128,323 @@ async def get_user_properties_by_unique_id(
         raise HTTPException(
             status_code=500,
             detail=f"査定物件の取得に失敗しました: {str(e)}"
+        )
+
+
+@router.get("/satei/users/{unique_id}")
+async def get_satei_user_by_unique_id(
+    unique_id: str,
+    api_key: dict = Depends(verify_api_key)
+):
+    """指定ユーザーの情報を取得"""
+    try:
+        async with db_connection.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # ユーザー情報を取得（フォーム入力の会社名、姓名、電話番号を含む）
+                await cursor.execute("""
+                    SELECT id, unique_id, email, name, contact_id, owner_id, owner_name, 
+                           hubspot_company_name, company_name, last_name, first_name, phone_number,
+                           is_email_invalid, created_at, updated_at
+                    FROM satei_users WHERE unique_id = %s
+                """, (unique_id,))
+                
+                user_result = await cursor.fetchone()
+                if not user_result:
+                    raise HTTPException(status_code=404, detail="指定されたユーザーが見つかりません")
+                
+                # カラム名を取得
+                columns = [desc[0] for desc in cursor.description]
+                user_dict = dict(zip(columns, user_result))
+        
+        return {
+            "status": "success",
+            "data": user_dict
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"査定ユーザー取得エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"査定ユーザーの取得に失敗しました: {str(e)}"
+        )
+
+
+@router.put("/satei/users/{unique_id}")
+async def update_satei_user(
+    unique_id: str,
+    company_name: Optional[str] = Body(None),
+    last_name: Optional[str] = Body(None),
+    first_name: Optional[str] = Body(None),
+    phone_number: Optional[str] = Body(None),
+    contact_id: Optional[str] = Body(None),
+    hubspot_company_name: Optional[str] = Body(None),
+    hubspot_name: Optional[str] = Body(None),
+    owner_id: Optional[str] = Body(None),
+    owner_name: Optional[str] = Body(None),
+    api_key: dict = Depends(verify_api_key)
+):
+    """指定ユーザーの情報を更新"""
+    try:
+        async with db_connection.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                # ユーザーが存在するか確認
+                await cursor.execute("""
+                    SELECT id FROM satei_users WHERE unique_id = %s
+                """, (unique_id,))
+                
+                user_result = await cursor.fetchone()
+                if not user_result:
+                    raise HTTPException(status_code=404, detail="指定されたユーザーが見つかりません")
+                
+                user_id = user_result[0]
+                
+                # 更新するフィールドを構築
+                update_fields = []
+                update_values = []
+                
+                if company_name is not None:
+                    update_fields.append("company_name = %s")
+                    update_values.append(company_name)
+                
+                if last_name is not None:
+                    update_fields.append("last_name = %s")
+                    update_values.append(last_name)
+                
+                if first_name is not None:
+                    update_fields.append("first_name = %s")
+                    update_values.append(first_name)
+                
+                if phone_number is not None:
+                    update_fields.append("phone_number = %s")
+                    update_values.append(phone_number)
+                
+                # HubSpot情報の更新
+                if contact_id is not None:
+                    update_fields.append("contact_id = %s")
+                    update_values.append(contact_id)
+                
+                if hubspot_company_name is not None:
+                    update_fields.append("hubspot_company_name = %s")
+                    update_values.append(hubspot_company_name)
+                
+                if hubspot_name is not None:
+                    update_fields.append("name = %s")
+                    update_values.append(hubspot_name)
+                
+                if owner_id is not None:
+                    update_fields.append("owner_id = %s")
+                    update_values.append(owner_id)
+                
+                if owner_name is not None:
+                    update_fields.append("owner_name = %s")
+                    update_values.append(owner_name)
+                
+                # 更新するフィールドがない場合はエラー
+                if not update_fields:
+                    raise HTTPException(status_code=400, detail="更新するフィールドが指定されていません")
+                
+                # 更新を実行
+                update_values.append(user_id)
+                update_query = f"""
+                    UPDATE satei_users 
+                    SET {', '.join(update_fields)}
+                    WHERE id = %s
+                """
+                await cursor.execute(update_query, tuple(update_values))
+                await conn.commit()
+                
+                logger.info(f"査定ユーザー情報を更新: user_id={user_id}, unique_id={unique_id}, fields={update_fields}")
+        
+        return {
+            "status": "success",
+            "message": "ユーザー情報を更新しました"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"査定ユーザー更新エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"査定ユーザーの更新に失敗しました: {str(e)}"
+        )
+
+
+@router.post("/satei/users/search-hubspot-contacts")
+async def search_hubspot_contacts(
+    search_query: str = Body(..., embed=True),
+    api_key: dict = Depends(verify_api_key)
+):
+    """HubSpotコンタクトを検索（メールアドレスまたは名前で）"""
+    try:
+        from hubspot.client import HubSpotBaseClient
+        client = HubSpotBaseClient()
+        
+        search_query = search_query.strip()
+        if not search_query:
+            return {
+                "status": "success",
+                "data": {
+                    "contacts": []
+                }
+            }
+        
+        # メールアドレスか名前で検索
+        # HubSpot APIでは、filterGroupsは配列で、各filterGroups内のfiltersはANDで結合される
+        # filterGroups間はORで結合される
+        # 実際に動作している実装（upload_satei_property）を参考にする
+        filter_groups = []
+        
+        # メールアドレス形式かどうかを判定（@が含まれているか）
+        if "@" in search_query:
+            # メールアドレスの場合：完全一致（実際に動作している実装と同じ）
+            filter_groups.append({
+                "filters": [{
+                    "propertyName": "email",
+                    "operator": "EQ",
+                    "value": search_query
+                }]
+            })
+        else:
+            # メールアドレスでない場合：名前での検索
+            # firstnameとlastnameの両方でCONTAINSを使用（CONTAINS_TOKENは単語単位なので、名前検索にはCONTAINSの方が適切）
+            filter_groups.append({
+                "filters": [{
+                    "propertyName": "firstname",
+                    "operator": "CONTAINS",
+                    "value": search_query
+                }]
+            })
+            filter_groups.append({
+                "filters": [{
+                    "propertyName": "lastname",
+                    "operator": "CONTAINS",
+                    "value": search_query
+                }]
+            })
+            # 念のため、メールアドレスの部分一致も試す
+            filter_groups.append({
+                "filters": [{
+                    "propertyName": "email",
+                    "operator": "CONTAINS",
+                    "value": search_query
+                }]
+            })
+        
+        search_request = {
+            "filterGroups": filter_groups,
+            "properties": ["email", "firstname", "lastname", "hubspot_owner_id", "phone"],
+            "limit": 20
+        }
+        
+        logger.info(f"HubSpotコンタクト検索: query={search_query}, filterGroups={len(filter_groups)}")
+        logger.debug(f"HubSpot検索リクエスト: {search_request}")
+        
+        try:
+            search_result = await client._make_request("POST", "/crm/v3/objects/contacts/search", json=search_request)
+            contacts = search_result.get("results", [])
+            logger.info(f"HubSpotコンタクト検索結果: {len(contacts)}件")
+            if len(contacts) == 0:
+                logger.warning(f"HubSpot検索結果が0件: query={search_query}")
+                # 検索リクエストの詳細をログに記録
+                import json
+                logger.warning(f"検索リクエスト詳細: {json.dumps(search_request, ensure_ascii=False, indent=2)}")
+        except Exception as e:
+            logger.error(f"HubSpot検索API呼び出しエラー: {str(e)}")
+            # エラーの詳細をログに記録
+            import traceback
+            logger.error(traceback.format_exc())
+            # レスポンスの詳細も記録
+            if hasattr(e, 'response'):
+                logger.error(f"HubSpot APIレスポンス: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
+            raise
+        
+        # 担当者情報を取得
+        from hubspot.owners import HubSpotOwnersClient
+        owners_client = HubSpotOwnersClient()
+        owners = await owners_client.get_owners()
+        owners_dict = {}
+        if owners and isinstance(owners, list):
+            for owner in owners:
+                if isinstance(owner, dict) and owner.get("id"):
+                    owners_dict[str(owner.get("id"))] = owner
+        
+        # 各コンタクトに関連会社情報を取得
+        formatted_contacts = []
+        for contact in contacts:
+            contact_id = contact.get("id")
+            properties = contact.get("properties", {})
+            
+            # 名前を結合
+            lastname = properties.get("lastname") or ""
+            firstname = properties.get("firstname") or ""
+            full_name = (lastname + " " + firstname).strip() or None
+            
+            # 担当者情報を取得
+            owner_id = properties.get("hubspot_owner_id")
+            owner_name = None
+            if owner_id and owner_id in owners_dict:
+                owner_info = owners_dict[owner_id]
+                # 担当者の名前を取得
+                # HubSpot APIのownersレスポンスにはfirstName, lastName, emailが含まれる
+                owner_first_name = owner_info.get("firstName") or owner_info.get("first_name") or ""
+                owner_last_name = owner_info.get("lastName") or owner_info.get("last_name") or ""
+                if owner_first_name or owner_last_name:
+                    owner_name = (owner_last_name + " " + owner_first_name).strip()
+                else:
+                    # 名前がない場合はemailを使用
+                    owner_name = owner_info.get("email") or None
+            
+            # 関連会社を取得
+            company_name = None
+            try:
+                associations_response = await client._make_request(
+                    "GET",
+                    f"/crm/v4/objects/contacts/{contact_id}/associations/companies",
+                    params={"limit": 1},
+                    timeout=30.0
+                )
+                
+                if associations_response and associations_response.get('results'):
+                    first_result = associations_response.get('results', [{}])[0]
+                    if isinstance(first_result, dict):
+                        company_id = first_result.get('toObjectId') or first_result.get('id')
+                    else:
+                        company_id = first_result
+                    
+                    if company_id:
+                        company_info = await client._make_request(
+                            "GET",
+                            f"/crm/v3/objects/companies/{company_id}",
+                            params={"properties": "name"},
+                            timeout=30.0
+                        )
+                        if company_info and company_info.get('properties'):
+                            company_name = company_info.get('properties', {}).get('name')
+            except Exception as e:
+                logger.warning(f"会社情報取得エラー: contact_id={contact_id}, error={str(e)}")
+            
+            formatted_contacts.append({
+                "id": contact_id,
+                "email": properties.get("email"),
+                "name": full_name,
+                "company_name": company_name,
+                "owner_id": owner_id,
+                "owner_name": owner_name,
+                "phone": properties.get("phone")
+            })
+        
+        return {
+            "status": "success",
+            "data": {
+                "contacts": formatted_contacts
+            }
+        }
+    except Exception as e:
+        logger.error(f"HubSpotコンタクト検索エラー: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"HubSpotコンタクトの検索に失敗しました: {str(e)}"
         )
 
 
@@ -1137,6 +1522,10 @@ async def get_satei_properties(
     status: Optional[str] = None,
     owner_user_id: Optional[int] = None,
     for_sale: Optional[bool] = None,
+    user_email: Optional[str] = None,
+    user_unique_id: Optional[str] = None,
+    user_name: Optional[str] = None,
+    user_id: Optional[int] = None,
     api_key: dict = Depends(verify_api_key)
 ):
     """査定物件一覧を取得"""
@@ -1161,6 +1550,29 @@ async def get_satei_properties(
                 if for_sale is not None:
                     where_conditions.append("sp.for_sale = %s")
                     params.append(1 if for_sale else 0)
+                
+                # ユーザー検索条件
+                if user_email:
+                    where_conditions.append("su.email LIKE %s")
+                    params.append(f"%{user_email}%")
+                
+                if user_unique_id:
+                    where_conditions.append("su.unique_id = %s")
+                    params.append(user_unique_id)
+                
+                if user_name:
+                    # 名前での検索（フォーム入力の姓・名、またはHubSpotの名前）
+                    where_conditions.append("""
+                        (su.last_name LIKE %s OR su.first_name LIKE %s OR su.name LIKE %s 
+                         OR CONCAT(su.last_name, ' ', su.first_name) LIKE %s)
+                    """)
+                    name_pattern = f"%{user_name}%"
+                    params.extend([name_pattern, name_pattern, name_pattern, name_pattern])
+                
+                # ユーザーIDでの検索（選択したユーザーの物件のみ）
+                if user_id is not None:
+                    where_conditions.append("su.id = %s")
+                    params.append(user_id)
                 
                 where_clause = ""
                 if where_conditions:
@@ -1539,7 +1951,7 @@ async def update_satei_property(
                                 satei_url = f"{mirai_base_url}/admin/satei/detail/{property_id}"
                                 
                                 # メッセージを構築
-                                message_text = f"{' '.join(mentions)} \n■■■■■売却希望■■■■■\n"
+                                message_text = f"{' '.join(mentions)} \n■■■■■買取打診■■■■■\n"
                                 message_text += f"・HubSpotコンタクトページURL\n{hubspot_contact_url}\n"
                                 message_text += f"・HubSpot会社名\n{hubspot_company_name_display}\n"
                                 message_text += f"・HubSpotコンタクト名\n{contact_name}\n"
