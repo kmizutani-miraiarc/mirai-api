@@ -575,10 +575,10 @@ async def upload_satei_property(
                     mentions.append(owner_mention)
                 
                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-#                mentions.append('<@U05FNC60W2V>')
+                mentions.append('<@U05FNC60W2V>')
                 
                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-#                mentions.append('<!subteam^S09B4NN6TTJ>')
+                mentions.append('<!subteam^S09B4NN6TTJ>')
                 
                 # 通知内容を構築
                 contact_id = contact_info.get("contact_id") if contact_info else None
@@ -1931,10 +1931,10 @@ async def update_satei_property(
                                     mentions.append(owner_mention)
                                 
                                 # 2. 赤瀬さん（akase@miraiarc.jpのmention）
-#                                mentions.append('<@U05FNC60W2V>')
+                                mentions.append('<@U05FNC60W2V>')
                                 
                                 # 3. 営業事務（User Groupの場合は<!subteam^ID>形式を使用）
-#                                mentions.append('<!subteam^S09B4NN6TTJ>')
+                                mentions.append('<!subteam^S09B4NN6TTJ>')
                                 
                                 # 通知内容を構築
                                 contact_id = property_dict.get('contact_id')
